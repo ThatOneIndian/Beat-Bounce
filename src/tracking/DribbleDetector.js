@@ -111,7 +111,7 @@ export class DribbleDetector {
       if (timestamp - this.lastDribbleTime >= cooldown) {
         dribbleDetected = true;
         dribbleHand = 'left';
-        dribbleIntensity = Math.min(1, leftV / 0.002);
+        dribbleIntensity = Math.min(1, leftV / 0.0012);
         dribbleScreenX = leftPoint.rawX;
         dribbleScreenY = leftPoint.rawY;
         this.leftFired = true;
@@ -123,7 +123,7 @@ export class DribbleDetector {
       if (timestamp - this.lastDribbleTime >= cooldown) {
         dribbleDetected = true;
         dribbleHand = 'right';
-        dribbleIntensity = Math.min(1, rightV / 0.002);
+        dribbleIntensity = Math.min(1, rightV / 0.0012);
         dribbleScreenX = rightPoint.rawX;
         dribbleScreenY = rightPoint.rawY;
         this.rightFired = true;
