@@ -1,119 +1,164 @@
-class VelocityTracker {
-  constructor() {
-    this.history = [];  // ring buffer of {y, timestamp} entries
-    this.maxHistory = 5; // smoothing window
+import { VelocityTracker } from './VelocityTracker.js';
+import { LANDMARKS, DETECTION_CONFIG } from '../utils/constants.js';
+
+function getBestTrackingPoint(landmarks, hand) {
+  const wristIdx = hand === 'left' ? LANDMARKS.LEFT_WRIST : LANDMARKS.RIGHT_WRIST;
+  const elbowIdx = hand === 'left' ? LANDMARKS.LEFT_ELBOW : LANDMARKS.RIGHT_ELBOW;
+  const shoulderIdx = hand === 'left' ? LANDMARKS.LEFT_SHOULDER : LANDMARKS.RIGHT_SHOULDER;
+
+  const wrist = landmarks[wristIdx];
+  const elbow = landmarks[elbowIdx];
+  const shoulder = landmarks[shoulderIdx];
+
+  if (wrist.visibility > 0.5) {
+    return {
+      y: wrist.y - shoulder.y, // Normalization: wrist position relative to shoulder
+      z: wrist.z,
+      x: wrist.x,
+      rawY: wrist.y,
+      rawX: wrist.x,
+      source: 'wrist',
+      visibility: wrist.visibility
+    };
   }
 
-  update(y, timestamp) {
-    this.history.push({ y, timestamp });
-    if (this.history.length > this.maxHistory) this.history.shift();
-    
-    if (this.history.length < 2) return 0;
-    
-    // Use weighted average of recent velocity samples for smoothing
-    let totalVelocity = 0;
-    let totalWeight = 0;
-    
-    for (let i = 1; i < this.history.length; i++) {
-      const dy = this.history[i].y - this.history[i - 1].y;
-      const dt = this.history[i].timestamp - this.history[i - 1].timestamp;
-      if (dt === 0) continue;
-      
-      const velocity = dy / dt;  // units per millisecond
-      const weight = i;  // recent samples weighted more
-      totalVelocity += velocity * weight;
-      totalWeight += weight;
-    }
-    
-    return totalWeight > 0 ? totalVelocity / totalWeight : 0;
+  if (elbow.visibility > 0.3) {
+    return {
+      y: elbow.y - shoulder.y,
+      z: elbow.z,
+      x: elbow.x,
+      rawY: elbow.y,
+      rawX: elbow.x,
+      source: 'elbow',
+      visibility: elbow.visibility * 0.6
+    };
   }
+
+  return null;
 }
 
 export class DribbleDetector {
   constructor() {
-    this.leftTracker = new VelocityTracker();
-    this.rightTracker = new VelocityTracker();
-    
-    this.prevLeftVelocity = 0;
-    this.prevRightVelocity = 0;
-    
-    this.lastDribbleTime = 0;
-    this.MIN_DRIBBLE_INTERVAL = 200;  // ms — prevents double-triggers (max ~300 BPM)
-    this.MIN_VELOCITY_THRESHOLD = 0.001; // Normalized units/ms threshold - Needs tuning
-    
-    // Which hand is dribbling
-    this.dominantHand = null;
-    this.leftDribbleCount = 0;
-    this.rightDribbleCount = 0;
-  }
+    this.leftVelocity = new VelocityTracker();
+    this.rightVelocity = new VelocityTracker();
 
-  // Convert MediaPipe coords [0, 1] to a metric format
-  extractWristData(landmarks) {
-    return {
-      left: {
-        y: landmarks[15].y,
-        z: landmarks[15].z,
-        visibility: landmarks[15].visibility
-      },
-      right: {
-        y: landmarks[16].y,
-        z: landmarks[16].z,
-        visibility: landmarks[16].visibility
-      }
-    };
+    this.prevLeftV = 0;
+    this.prevRightV = 0;
+
+    this.lastDribbleTime = 0;
+
+    this.leftCount = 0;
+    this.rightCount = 0;
+    this.dominantHand = null;
+
+    this.leftPeakV = 0;
+    this.rightPeakV = 0;
   }
 
   processFrame(landmarks, timestamp) {
-    if (!landmarks || landmarks.length < 17) return { detected: false };
+    const result = {
+      detected: false,
+      hand: null,
+      timestamp: timestamp,
+      intensity: 0,
+      wristScreenX: 0,
+      wristScreenY: 0,
+      leftVelocity: 0,
+      rightVelocity: 0,
+      dominantHand: this.dominantHand
+    };
 
-    const wrists = this.extractWristData(landmarks);
-    
-    // MediaPipe Y is top-down (0 at top, 1 at bottom). Moving down = positive velocity.
-    const leftVelocity = this.leftTracker.update(wrists.left.y, timestamp);
-    const rightVelocity = this.rightTracker.update(wrists.right.y, timestamp);
-    
+    if (!landmarks) return result;
+
+    const leftPoint = getBestTrackingPoint(landmarks, 'left');
+    const rightPoint = getBestTrackingPoint(landmarks, 'right');
+
+    let leftV = 0;
+    let rightV = 0;
+
+    if (leftPoint) {
+      leftV = this.leftVelocity.update(leftPoint.y, timestamp);
+    }
+    if (rightPoint) {
+      rightV = this.rightVelocity.update(rightPoint.y, timestamp);
+    }
+
+    result.leftVelocity = leftV;
+    result.rightVelocity = rightV;
+
+    if (leftV > 0) this.leftPeakV = Math.max(this.leftPeakV, leftV);
+    if (rightV > 0) this.rightPeakV = Math.max(this.rightPeakV, rightV);
+
     let dribbleDetected = false;
     let dribbleHand = null;
-    
-    // Check left wrist for zero-crossing (downward → upward)
-    if (this.prevLeftVelocity > this.MIN_VELOCITY_THRESHOLD && leftVelocity <= 0) {
-      if (timestamp - this.lastDribbleTime > this.MIN_DRIBBLE_INTERVAL) {
-        dribbleDetected = true;
-        dribbleHand = 'left';
-        this.leftDribbleCount++;
+    let dribbleIntensity = 0;
+    let dribbleScreenX = 0;
+    let dribbleScreenY = 0;
+
+    // Zero-crossing check: was moving down (positive V), now stopped or moving up (non-positive V)
+    const thresh = DETECTION_CONFIG.MIN_VELOCITY_THRESHOLD;
+    const cooldown = DETECTION_CONFIG.COOLDOWN_MS;
+
+    if (leftPoint && this.prevLeftV > thresh && leftV <= 0) {
+      if (timestamp - this.lastDribbleTime >= cooldown) {
+        if (this.leftPeakV > thresh) {
+          dribbleDetected = true;
+          dribbleHand = 'left';
+          dribbleIntensity = Math.min(1, this.leftPeakV / 0.002);
+          dribbleScreenX = leftPoint.rawX;
+          dribbleScreenY = leftPoint.rawY;
+        }
       }
     }
-    
-    // Check right wrist for zero-crossing
-    if (this.prevRightVelocity > this.MIN_VELOCITY_THRESHOLD && rightVelocity <= 0) {
-      if (timestamp - this.lastDribbleTime > this.MIN_DRIBBLE_INTERVAL) {
-        dribbleDetected = true;
-        dribbleHand = 'right';
-        this.rightDribbleCount++;
+
+    if (!dribbleDetected && rightPoint && this.prevRightV > thresh && rightV <= 0) {
+      if (timestamp - this.lastDribbleTime >= cooldown) {
+        if (this.rightPeakV > thresh) {
+          dribbleDetected = true;
+          dribbleHand = 'right';
+          dribbleIntensity = Math.min(1, this.rightPeakV / 0.002);
+          dribbleScreenX = rightPoint.rawX;
+          dribbleScreenY = rightPoint.rawY;
+        }
       }
     }
-    
+
     if (dribbleDetected) {
       this.lastDribbleTime = timestamp;
-      
-      // Auto-detect dominant hand after 10 dribbles
-      if (this.leftDribbleCount + this.rightDribbleCount > 10) {
-        this.dominantHand = this.leftDribbleCount > this.rightDribbleCount 
-          ? 'left' : 'right';
+      if (dribbleHand === 'left') this.leftCount++;
+      if (dribbleHand === 'right') this.rightCount++;
+
+      if (this.leftCount + this.rightCount >= 8) {
+        this.dominantHand = this.leftCount > this.rightCount ? 'left' : 'right';
       }
+
+      this.leftPeakV = 0;
+      this.rightPeakV = 0;
+
+      result.detected = true;
+      result.hand = dribbleHand;
+      result.intensity = dribbleIntensity;
+      result.wristScreenX = dribbleScreenX;
+      result.wristScreenY = dribbleScreenY;
+      result.dominantHand = this.dominantHand;
     }
-    
-    this.prevLeftVelocity = leftVelocity;
-    this.prevRightVelocity = rightVelocity;
-    
-    return {
-      detected: dribbleDetected,
-      hand: dribbleHand,
-      timestamp: timestamp,
-      velocityMagnitude: dribbleHand === 'left' 
-        ? Math.abs(this.prevLeftVelocity) 
-        : Math.abs(this.prevRightVelocity),
-      wristPositions: wrists
-    };
+
+    this.prevLeftV = leftV;
+    this.prevRightV = rightV;
+
+    return result;
+  }
+
+  reset() {
+    this.leftVelocity.reset();
+    this.rightVelocity.reset();
+    this.prevLeftV = 0;
+    this.prevRightV = 0;
+    this.lastDribbleTime = 0;
+    this.leftPeakV = 0;
+    this.rightPeakV = 0;
+    this.leftCount = 0;
+    this.rightCount = 0;
+    this.dominantHand = null;
   }
 }

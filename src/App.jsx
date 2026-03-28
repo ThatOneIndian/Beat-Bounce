@@ -13,20 +13,9 @@ import { AudioDribbleDetector } from './tracking/AudioDetector';
 import { SensorFusion } from './tracking/SensorFusion';
 import { TrackGenerator } from './music/TrackGenerator';
 import { GeminiLiveClassifier } from './ai/GeminiLiveClassifier';
+import { FeedbackManager } from './feedback/FeedbackManager';
+import * as Tone from 'tone';
 import './index.css';
-
-// Keep instances outside React state to avoid re-renders disrupting the tight loop
-let staticEngines = {
-  poseTracker: new PoseTracker(),
-  dribbleDetector: new DribbleDetector(),
-  audioDetector: new AudioDribbleDetector(),
-  rhythmEngine: new RhythmEngine(),
-  beatGrid: new BeatGrid(),
-  musicEngine: new LayeredMusicEngine()
-};
-staticEngines.beatScorer = new BeatScorer(staticEngines.beatGrid);
-staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
-staticEngines.geminiLive = new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
 
 function App() {
   const [appState, setAppState] = useState('config'); // config, generating, countdown, active, error
@@ -41,22 +30,49 @@ function App() {
 
   const [stats, setStats] = useState({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: 5, meter: 50 });
   const [errorMessage, setErrorMessage] = useState("");
+  const [genStatus, setGenStatus] = useState("Initializing...");
   const [mediaStream, setMediaStream] = useState(null);
-  
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const feedbackContainerRef = useRef(null);
   const reqRef = useRef(null);
+
+  // High-performance singletons initialized only when needed
+  const enginesRef = useRef(null);
+  const feedbackManagerRef = useRef(null);
+
+  const initializeEngines = async () => {
+    if (enginesRef.current) return;
+
+    const poseTracker = new PoseTracker();
+    const dribbleDetector = new DribbleDetector();
+    const audioDetector = new AudioDribbleDetector();
+    const rhythmEngine = new RhythmEngine();
+    const beatGrid = new BeatGrid();
+    const musicEngine = new LayeredMusicEngine();
+    const sensorFusion = new SensorFusion();
+
+    enginesRef.current = {
+      poseTracker, dribbleDetector, audioDetector, rhythmEngine, beatGrid, musicEngine,
+      sensorFusion,
+      beatScorer: new BeatScorer(beatGrid),
+      trackGen: new TrackGenerator(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY),
+      geminiLive: new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY)
+    };
+
+    console.log("Engines categorized and ready.");
+  };
 
   // Setup webcam preview early
   useEffect(() => {
     async function setupCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          audio: true 
+          audio: true
         });
         setMediaStream(stream);
-        staticEngines.audioDetector.init(stream);
       } catch (err) {
         console.error("Failed to access camera/mic:", err);
       }
@@ -69,84 +85,131 @@ function App() {
     if (videoRef.current && mediaStream && videoRef.current.srcObject !== mediaStream) {
       videoRef.current.srcObject = mediaStream;
       videoRef.current.onloadedmetadata = () => {
-        videoRef.current.play().catch(e => console.warn("Video autplay blocked", e));
+        videoRef.current.play().catch(e => console.warn("Video autoplay blocked", e));
       };
     }
   });
 
   const handleQuit = () => {
-    staticEngines.musicEngine.stopAll();
+    const engines = enginesRef.current;
+    if (engines) engines.musicEngine.stopAll();
+    if (feedbackManagerRef.current) {
+      feedbackManagerRef.current.destroy();
+      feedbackManagerRef.current = null;
+    }
     setAppState('config');
-    setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy });
+    setGenStatus("Initializing...");
+    setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy, meter: 50 });
   };
 
   const handleStart = async (newConfig) => {
     setConfig(newConfig);
     setAppState('generating');
+    setGenStatus("Warming up engines...");
 
-    const targetBPM = Math.round((newConfig.tempo_range.min + newConfig.tempo_range.max) / 2);
+    try {
+      await initializeEngines();
+      const engines = enginesRef.current;
 
-    await staticEngines.poseTracker.initialize();
-    await staticEngines.musicEngine.initialize(newConfig.genre);
-    staticEngines.musicEngine.start(targetBPM);
-    staticEngines.geminiLive.connect();
+      const targetBPM = Math.round((newConfig.tempo_range.min + newConfig.tempo_range.max) / 2);
 
-    // Lyria loads in background as ambient layer — game starts immediately
-    staticEngines.trackGen.generateTrack(targetBPM, newConfig)
-      .then(trackUrl => staticEngines.musicEngine.loadAmbient(trackUrl, targetBPM))
-      .catch(err => console.warn("Lyria ambient failed (non-blocking):", err));
+      setGenStatus("Unlocking Audio Context...");
+      await Tone.start();
+      console.log("Audio Context Unlocked");
 
-    setAppState('countdown');
+      setGenStatus("Initializing MediaPipe Pose (Lite)...");
+      await engines.poseTracker.initialize();
+
+      setGenStatus("Setting up Audio Harmony Engine...");
+      await engines.musicEngine.initialize(newConfig.genre);
+
+      setGenStatus("Connecting to Gemini Live...");
+      await engines.geminiLive.connect();
+
+      engines.audioDetector.init(mediaStream);
+
+      if (!newConfig.testMode) {
+        setGenStatus("Requesting Lyria 3 Generation (this can take 20s)...");
+        const trackUrl = await engines.trackGen.generateTrack(targetBPM, newConfig);
+
+        setGenStatus("Decoding & Buffering Audio Assets...");
+        await engines.musicEngine.loadTrack(targetBPM, trackUrl);
+
+        setGenStatus("Finalizing Audio Playback...");
+        engines.musicEngine.playTrack(targetBPM);
+      } else {
+        console.log("[Test Mode] Bypassing music generation.");
+      }
+
+      Tone.Transport.start();
+      setAppState('countdown');
+    } catch (err) {
+      console.error("[Startup Error]", err);
+      setErrorMessage(err.message || "Unknown error generating Lyria track.");
+      setAppState('error');
+    }
   };
 
   useEffect(() => {
     if (appState === 'countdown') {
-      setTimeout(() => setAppState('active'), 3000); // 3-second countdown
+      setTimeout(() => setAppState('active'), 3000);
     }
   }, [appState]);
 
-  // Main game loop fixes the freeze!
+  // Main game loop
   useEffect(() => {
     if (appState === 'active') {
       const canvas = canvasRef.current;
+      const container = feedbackContainerRef.current;
       const ctx = canvas?.getContext('2d');
       const video = videoRef.current;
-      
-      if (!canvas || !ctx || !video) return;
+      const engines = enginesRef.current;
+
+      if (!canvas || !ctx || !video || !engines || !container) return;
 
       const skeletonRenderer = new SkeletonRenderer(canvas);
-      const beatIndicator = new BeatIndicator(canvas, staticEngines.beatGrid);
+      const beatIndicator = new BeatIndicator(canvas, engines.beatGrid);
+
+      const feedbackManager = new FeedbackManager({ canvas, containerElement: container });
+      feedbackManagerRef.current = feedbackManager;
 
       const targetBPM = Math.round((config.tempo_range.min + config.tempo_range.max) / 2);
-      staticEngines.beatGrid.initialize(targetBPM, performance.now());
+      engines.beatGrid.initialize(targetBPM, performance.now());
       setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
 
-      let performanceMeter = 50; // 0-100, starts at middle
+      let performanceMeter = 50;
       let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy, meter: 50 };
 
-      const renderLoop = (timestamp) => {
-        // Only attempt to draw or parse if the video element has loaded frames
-        if (video.readyState >= 2) { // HAVE_CURRENT_DATA or higher
-          // Draw video background
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.save();
-          ctx.scale(-1, 1);
-          ctx.translate(-canvas.width, 0);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
+      feedbackManager.startTrack(targetBPM, engines.musicEngine.gainNode);
 
-          // Tracker processing
-          const landmarks = staticEngines.poseTracker.processFrame(video, timestamp);
-          if (landmarks) {
-            const visEvent = staticEngines.dribbleDetector.processFrame(landmarks, timestamp);
-            const audEvent = staticEngines.audioDetector.detect(timestamp);
-            
-            const fused = SensorFusion.fuseDribbleSignals(visEvent, audEvent);
-            
+      const renderLoop = (timestamp) => {
+        try {
+          const audioTime = engines.musicEngine.getAudioTime();
+
+          if (video.readyState >= 2) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-canvas.width, 0);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            const landmarks = engines.poseTracker.processFrame(video, timestamp);
+
+            engines.beatGrid.regenerate(timestamp);
+
+            let visEvent = { detected: false, timestamp };
+            if (landmarks) {
+              visEvent = engines.dribbleDetector.processFrame(landmarks, timestamp);
+            }
+
+            const audEvent = engines.audioDetector.detect(timestamp);
+            const fused = engines.sensorFusion.process(visEvent, audEvent, timestamp);
+
             if (fused.detected) {
-              const rhythm = staticEngines.rhythmEngine.onDribble(fused.timestamp);
-              const scoreResult = staticEngines.beatScorer.scoreDribble(fused.timestamp);
-              
+              const rhythm = engines.rhythmEngine.onDribble(fused.timestamp);
+              const scoreResult = engines.beatScorer.scoreDribble(fused.timestamp);
+
               // Update performance meter
               if (scoreResult.rating === 'perfect') performanceMeter += 8;
               else if (scoreResult.rating === 'great') performanceMeter += 5;
@@ -154,53 +217,71 @@ function App() {
               else performanceMeter -= 12;
               performanceMeter = Math.max(0, Math.min(100, performanceMeter));
 
-              skeletonRenderer.setScoreColor(scoreResult.rating);
-              staticEngines.musicEngine.playHitSFX(scoreResult.rating);
-              // Music layers tied to meter: 0-25 kick only, 25-50 +bass, 50-75 +chords, 75+ +lead
+              // Integrated feedback (from main)
+              const wristHand = fused.hand || 'right';
+              const wristPos = landmarks ? {
+                x: (1 - landmarks[wristHand === 'left' ? 15 : 16].x) * canvas.width,
+                y: landmarks[wristHand === 'left' ? 15 : 16].y * canvas.height
+              } : null;
+
+              feedbackManager.onDribbleScored(scoreResult, wristPos);
+              skeletonRenderer.flashRating(scoreResult.rating);
+              engines.musicEngine.playHitSFX(scoreResult.rating);
+
+              // Music layers tied to meter
               const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
-              staticEngines.musicEngine.setPerformanceLevel(meterCombo);
-              beatIndicator.addSplash(scoreResult.rating);
-              if (rhythm) {
-                staticEngines.musicEngine.updateBPM(Math.round(rhythm.bpm));
-                staticEngines.musicEngine.updateAmbientTempo(Math.round(rhythm.bpm));
+              if (engines.musicEngine.setPerformanceLevel) {
+                engines.musicEngine.setPerformanceLevel(meterCombo);
               }
 
+              if (rhythm) {
+                const roundedBPM = Math.round(rhythm.bpm);
+                engines.beatGrid.updateBPM(roundedBPM);
+                engines.musicEngine.updateTempo(roundedBPM);
+                feedbackManager.updateBPM(roundedBPM);
+              }
+
+              beatIndicator.addSplash(scoreResult.rating);
+
               currentStats = {
-                 score: scoreResult.totalScore,
-                 combo: scoreResult.combo,
-                 maxCombo: scoreResult.maxCombo,
-                 rating: scoreResult.rating,
-                 bpm: rhythm ? Math.round(rhythm.bpm) : currentStats.bpm,
-                 energy: config.energy,
-                 meter: performanceMeter
+                score: scoreResult.totalScore,
+                combo: scoreResult.combo,
+                maxCombo: scoreResult.maxCombo,
+                rating: scoreResult.rating,
+                bpm: rhythm ? Math.round(rhythm.bpm) : currentStats.bpm,
+                energy: config.energy,
+                meter: performanceMeter
               };
-              
-              // Push update to React
+
               setStats({...currentStats});
-              
+
               setTimeout(() => {
                 setStats(s => s.rating === scoreResult.rating ? {...s, rating: null} : s);
               }, 500);
             }
-            skeletonRenderer.render(landmarks);
-            
-            // Stream compressed frame to Gemini once per second
-            staticEngines.geminiLive.maybeSendFrame(canvas, timestamp);
-          } else {
-             // In case landmarks are temporarily lost, clear the old skeleton but keep drawing background
-             skeletonRenderer.render([]);
+
+            if (landmarks) {
+              skeletonRenderer.render(landmarks);
+              engines.geminiLive.maybeSendFrame(canvas, timestamp);
+            }
+
+            beatIndicator.render(timestamp);
+            feedbackManager.renderFrame(landmarks);
           }
+        } catch (err) {
+          console.error("Render Loop Error:", err);
         }
 
-        // Draw Beat highway
-        beatIndicator.render(performance.now());
         reqRef.current = requestAnimationFrame(renderLoop);
       };
 
       reqRef.current = requestAnimationFrame(renderLoop);
-
       return () => {
         cancelAnimationFrame(reqRef.current);
+        if (feedbackManagerRef.current) {
+          feedbackManagerRef.current.destroy();
+          feedbackManagerRef.current = null;
+        }
       };
     }
   }, [appState, config]);
@@ -208,15 +289,14 @@ function App() {
   return (
     <div className="app-container" style={{ width: '100%', height: '100%', padding: '2rem', boxSizing: 'border-box' }}>
       <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '40vw', height: '40vw', background: 'radial-gradient(circle, rgba(0,255,204,0.1) 0%, rgba(0,0,0,0) 70%)', zIndex: -1 }}></div>
-      
+
       {appState === 'config' && <ConfigPanel initialConfig={config} onStart={handleStart} mediaStream={mediaStream} />}
 
       {appState === 'generating' && (
         <div className="glass-panel" style={{ height: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div className="loader" style={{ width: '64px', height: '64px', borderRadius: '50%', border: '4px solid var(--panel-border)', borderTopColor: 'var(--accent-color)', animation: 'spin 1s linear infinite' }}></div>
-          <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
-          <h2>Generating Lyria 3 Track...</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>Hold tight, this may take up to 30 seconds for audio inference.</p>
+          <h2 style={{ marginTop: '2rem' }}>{genStatus}</h2>
+          <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>Hold tight, this may take up to 30 seconds for audio inference.</p>
         </div>
       )}
 
@@ -235,7 +315,10 @@ function App() {
       )}
 
       {appState === 'active' && (
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden', background: '#000' }}>
+        <div
+          ref={feedbackContainerRef}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden', background: '#000' }}
+        >
           <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
           <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'cover' }}></canvas>
           <HUD {...stats} onQuit={handleQuit} />

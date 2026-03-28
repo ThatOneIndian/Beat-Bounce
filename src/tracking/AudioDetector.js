@@ -1,11 +1,18 @@
+import { DETECTION_CONFIG } from '../utils/constants.js';
+
 export class AudioDribbleDetector {
   constructor() {
     this.audioContext = null;
     this.analyser = null;
     this.dataArray = null;
-    
-    this.prevEnergy = 0;
-    this.threshold = 0.6;  // Set initial default, calibrate during warmup
+
+    this.smoothedEnergy = 0;
+    this.threshold = DETECTION_CONFIG.MIN_AUDIO_THRESHOLD;
+    this.noiseFloor = 0;
+    this.calibrated = false;
+    this.calibrationFrames = 0;
+    this.calibrationSum = 0;
+
     this.lastTrigger = 0;
     this.isInitialized = false;
   }
@@ -28,27 +35,52 @@ export class AudioDribbleDetector {
   }
 
   detect(timestamp) {
-    if (!this.isInitialized) return { detected: false };
+    if (!this.isInitialized || !this.analyser) return { detected: false };
 
     this.analyser.getByteTimeDomainData(this.dataArray);
     
-    // Calculate short-term energy (RMS)
-    let sum = 0;
-    for (let i = 0; i < this.bufferLength; i++) {
+    let sumOfSquares = 0;
+    for (let i = 0; i < this.dataArray.length; i++) {
       const normalized = (this.dataArray[i] - 128) / 128;
-      sum += normalized * normalized;
+      sumOfSquares += normalized * normalized;
     }
-    const rms = Math.sqrt(sum / this.bufferLength);
-    
-    // Detect transient: sudden energy spike
-    const energyDelta = rms - this.prevEnergy;
-    this.prevEnergy = rms * 0.7 + this.prevEnergy * 0.3;  // smooth
-    
+    const rms = Math.sqrt(sumOfSquares / this.dataArray.length);
+
+    if (!this.calibrated) {
+      this.calibrationSum += rms;
+      this.calibrationFrames++;
+      if (this.calibrationFrames >= 30) {
+        this.noiseFloor = this.calibrationSum / this.calibrationFrames;
+        this.threshold = Math.max(
+          this.noiseFloor * DETECTION_CONFIG.AUDIO_THRESHOLD_MULTIPLIER,
+          DETECTION_CONFIG.MIN_AUDIO_THRESHOLD
+        );
+        this.calibrated = true;
+        console.log(`Audio calibrated. Noise Floor: ${this.noiseFloor.toFixed(4)}, Threshold: ${this.threshold.toFixed(4)}`);
+      }
+      return { detected: false };
+    }
+
+    this.smoothedEnergy = this.smoothedEnergy * 0.9 + rms * 0.1;
+    const energyDelta = rms - this.smoothedEnergy;
+
     if (energyDelta > this.threshold && (timestamp - this.lastTrigger) > 150) {
       this.lastTrigger = timestamp;
-      return { detected: true, energy: rms, timestamp };
+      return {
+        detected: true,
+        energy: rms,
+        delta: energyDelta,
+        timestamp: timestamp
+      };
     }
     
     return { detected: false };
+  }
+
+  recalibrate() {
+    this.calibrated = false;
+    this.calibrationFrames = 0;
+    this.calibrationSum = 0;
+    this.smoothedEnergy = 0;
   }
 }

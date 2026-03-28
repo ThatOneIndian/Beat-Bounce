@@ -6,18 +6,31 @@ export class SkeletonRenderer {
     this.ctx = canvas.getContext('2d');
     this.currentScoreColor = '#00ffcc'; // Default color
     
+    this.flashTimeout = null;
+    this.currentFlashColor = 'rgba(255, 255, 255, 0.45)'; // Default idle
+    
     // MediaPipe helper to draw the connections
     this.connections = PoseLandmarker.POSE_CONNECTIONS;
   }
 
-  setScoreColor(rating) {
-    switch (rating) {
-      case 'perfect': this.currentScoreColor = '#FFD700'; break; // Gold
-      case 'great': this.currentScoreColor = '#00BFFF'; break; // Blue
-      case 'good': this.currentScoreColor = '#00FF00'; break; // Green
-      case 'miss': this.currentScoreColor = '#FF0000'; break; // Red
-      default: this.currentScoreColor = '#00ffcc'; break;
-    }
+  // Called by the hit-mediator on every scored dribble
+  flashRating(rating) {
+    const colors = {
+      perfect: 'rgba(255, 215, 0, 0.95)',   // Gold
+      great:   'rgba(74, 144, 217, 0.90)',   // Azure Blue
+      good:    'rgba(39, 174, 96, 0.85)',    // Emerald Green
+      miss:    'rgba(220, 60, 60, 0.85)'     // Crimson Red
+    };
+    
+    this.currentFlashColor = colors[rating] || colors.miss;
+    
+    if (this.flashTimeout) clearTimeout(this.flashTimeout);
+    
+    // Return to idle color after a brief duration
+    const flashDuration = rating === 'perfect' ? 400 : 250;
+    this.flashTimeout = setTimeout(() => {
+      this.currentFlashColor = 'rgba(255, 255, 255, 0.45)';
+    }, flashDuration);
   }
 
   render(landmarks) {
@@ -26,16 +39,17 @@ export class SkeletonRenderer {
     const width = this.canvas.width;
     const height = this.canvas.height;
     const ctx = this.ctx;
+    const color = this.currentFlashColor;
 
     // Draw connections (bones) - Outer Glow
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     
     // 1. Draw thick colored neon glow
-    ctx.lineWidth = 12;
-    ctx.strokeStyle = this.currentScoreColor;
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = this.currentScoreColor;
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = color;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = color;
     
     ctx.beginPath();
     for (const connection of this.connections) {
@@ -50,7 +64,7 @@ export class SkeletonRenderer {
     }
     ctx.stroke();
 
-    // 2. Draw thin white core
+    // 2. Draw thin white core (Visual depth)
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#FFFFFF';
     ctx.shadowBlur = 0;
@@ -81,7 +95,7 @@ export class SkeletonRenderer {
     
     // Highlight wrists (15, 16) with heavy pulse auras
     ctx.fillStyle = '#FFFFFF';
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 25;
     ctx.shadowColor = '#FF00FF'; // Magenta pulse
     const drawWrist = (lm) => {
       if (lm && lm.visibility > 0.5) {
@@ -92,16 +106,13 @@ export class SkeletonRenderer {
         // Draw an outer ring
         ctx.beginPath();
         ctx.strokeStyle = '#FF00FF';
-        ctx.lineWidth = 2;
-        ctx.arc((1 - lm.x) * width, lm.y * height, 18, 0, 2 * Math.PI);
+        ctx.lineWidth = 3;
+        ctx.arc((1 - lm.x) * width, lm.y * height, 22, 0, 2 * Math.PI);
         ctx.stroke();
       }
     };
     
     drawWrist(landmarks[15]);
     drawWrist(landmarks[16]);
-    
-    // Reset shadow
-    ctx.shadowBlur = 0;
   }
 }
