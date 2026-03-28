@@ -44,12 +44,14 @@ export class HarmonyEngine {
   // Called on every scored dribble
   onScore(rating) {
     const deltas = {
-      perfect: +6,    // 5-6 hits to gain a layer
-      great:   +4,
-      good:    +2,
-      miss:    -12    // 2-3 misses to lose a layer
+      perfect: +5,
+      great:   +3,
+      good:    +1,
+      miss:    -18,       // misses punish hard — 2 misses tanks the harmony
+      'too late': -18,
+      'too early': -18
     };
-    
+
     const delta = deltas[rating] || 0;
     this.targetHarmony = Math.max(0, Math.min(100, this.targetHarmony + delta));
   }
@@ -60,9 +62,9 @@ export class HarmonyEngine {
       this.harmonyLevel = this.targetHarmony;
       return;
     }
-    
-    // Rising is slow (build tension), Falling is fast (loose flow)
-    const rate = this.targetHarmony > this.harmonyLevel ? 0.08 : 0.15;
+
+    // Rising is slow (earn it), Falling is FAST (feel the loss immediately)
+    const rate = this.targetHarmony > this.harmonyLevel ? 0.06 : 0.25;
     this.harmonyLevel += (this.targetHarmony - this.harmonyLevel) * rate;
     
     this.applyHarmony();
@@ -71,16 +73,19 @@ export class HarmonyEngine {
   applyHarmony() {
     const h = this.harmonyLevel;
     
-    // Map harmony 0-100 to filter frequency 600Hz-20000Hz (log-ish scale)
+    // Map harmony 0-100 to filter frequency 250Hz-20000Hz (log-ish scale)
+    // More extreme range — at 0 the music sounds like it's underwater/dying
     let filterFreq;
-    if (h < 25) {
-      filterFreq = 600 + (h / 25) * 400;          // 600-1000 Hz (BARE)
-    } else if (h < 50) {
-      filterFreq = 1000 + ((h - 25) / 25) * 2000;  // 1000-3000 Hz (THIN)
-    } else if (h < 70) {
-      filterFreq = 3000 + ((h - 50) / 20) * 5000;  // 3000-8000 Hz (BUILDING)
+    if (h < 20) {
+      filterFreq = 250 + (h / 20) * 350;            // 250-600 Hz (SUFFOCATED)
+    } else if (h < 40) {
+      filterFreq = 600 + ((h - 20) / 20) * 1400;    // 600-2000 Hz (MUFFLED)
+    } else if (h < 65) {
+      filterFreq = 2000 + ((h - 40) / 25) * 4000;   // 2000-6000 Hz (BUILDING)
+    } else if (h < 85) {
+      filterFreq = 6000 + ((h - 65) / 20) * 8000;   // 6000-14000 Hz (BRIGHT)
     } else {
-      filterFreq = 8000 + ((h - 70) / 30) * 12000;  // 8000-20000 Hz (FULL/EUPHORIC)
+      filterFreq = 14000 + ((h - 85) / 15) * 6000;  // 14000-20000 Hz (EUPHORIC)
     }
     
     // Standard Tone.js scheduling

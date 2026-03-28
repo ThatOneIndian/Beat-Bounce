@@ -67,7 +67,10 @@ export class LayeredMusicEngine {
     this.genre = genre;
 
     this.limiter = new Tone.Limiter(-1).toDestination();
-    this.masterGain = new Tone.Volume(-6).connect(this.limiter);
+    // Performance-reactive master filter chain: lowpass (muffles on fail) + highpass (thins on fail)
+    this.masterLowpass = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 1 }).connect(this.limiter);
+    this.masterHighpass = new Tone.Filter({ type: 'highpass', frequency: 20, Q: 0.7 }).connect(this.masterLowpass);
+    this.masterGain = new Tone.Volume(-6).connect(this.masterHighpass);
 
     this.layerVolumes = [];
     for (let i = 0; i < 4; i++) {
@@ -153,7 +156,9 @@ export class LayeredMusicEngine {
 
     if (newLevel === this.performanceLevel) return;
 
-    const fadeTime = 1.5;
+    const gaining = newLevel > this.performanceLevel;
+    // Slow build-up (2s) but fast strip-down (0.4s) — feel the loss immediately
+    const fadeTime = gaining ? 2.0 : 0.4;
     for (let i = this.performanceLevel + 1; i <= newLevel; i++) {
       this.layerVolumes[i].volume.rampTo(0, fadeTime);
     }
@@ -163,6 +168,58 @@ export class LayeredMusicEngine {
     this.performanceLevel = newLevel;
   }
 
+  /**
+   * Called with the raw meter value (0-100) to drive master filter effects.
+   * This creates the dramatic "music dies" / "music comes alive" feel.
+   */
+  setMeterIntensity(meter) {
+    if (!this.isPlaying || !this.masterLowpass) return;
+
+    // Lowpass: full open at high meter, heavily muffled when failing
+    // meter 80-100: 20000Hz (wide open, bright)
+    // meter 50-80: 8000-20000Hz (full but slightly tamed)
+    // meter 25-50: 2000-8000Hz (noticeably duller)
+    // meter 0-25: 300-2000Hz (heavily muffled, underwater feel)
+    let lpFreq;
+    if (meter >= 80) {
+      lpFreq = 20000;
+    } else if (meter >= 50) {
+      lpFreq = 8000 + ((meter - 50) / 30) * 12000;
+    } else if (meter >= 25) {
+      lpFreq = 2000 + ((meter - 25) / 25) * 6000;
+    } else {
+      lpFreq = 300 + (meter / 25) * 1700;
+    }
+    this.masterLowpass.frequency.rampTo(lpFreq, 0.3);
+
+    // Highpass: thins out the low-end when failing hard
+    // meter 0-20: 200-400Hz (no bass, sounds empty and thin)
+    // meter 20-40: 60-200Hz (reduced bass)
+    // meter 40+: 20Hz (full bass, normal)
+    let hpFreq;
+    if (meter >= 40) {
+      hpFreq = 20;
+    } else if (meter >= 20) {
+      hpFreq = 200 - ((meter - 20) / 20) * 180;
+    } else {
+      hpFreq = 400 - (meter / 20) * 200;
+    }
+    this.masterHighpass.frequency.rampTo(hpFreq, 0.3);
+
+    // Ambient track: louder when doing well, quiet when failing
+    if (this.ambientVolume) {
+      // meter 80+: -10dB (prominent), meter 50: -16dB, meter 0: -40dB (barely audible)
+      const ambientDb = meter >= 80 ? -10 : meter >= 40 ? -16 + ((meter - 40) / 40) * 6 : -40 + (meter / 40) * 24;
+      this.ambientVolume.volume.rampTo(ambientDb, 0.5);
+    }
+
+    // Drum volume boost when doing well — drums hit harder at high meter
+    if (this.layerVolumes[0]) {
+      const drumDb = meter >= 70 ? 2 : meter >= 40 ? 0 : -3;
+      this.layerVolumes[0].volume.rampTo(drumDb, 0.5);
+    }
+  }
+
   updateBPM(newBPM) {
     if (!this.isPlaying) return;
     if (Math.abs(Tone.Transport.bpm.value - newBPM) < 3) return;
@@ -170,7 +227,8 @@ export class LayeredMusicEngine {
   }
 
   playHitSFX(rating) {
-    if (!this.isInitialized || rating === 'miss') return;
+    if (!this.isInitialized) return;
+    if (rating === 'miss' || rating === 'too late' || rating === 'too early') return;
     if (rating === 'perfect') this.sfxSynth.triggerAttackRelease('C5', '16n');
     else if (rating === 'great') this.sfxSynth.triggerAttackRelease('A4', '16n');
     else if (rating === 'good') this.sfxSynth.triggerAttackRelease('F4', '16n');
@@ -227,7 +285,7 @@ export class LayeredMusicEngine {
      this.chordSynth, this.leadSynth, this.sfxSynth, this.ambientPlayer
     ].forEach(n => n?.dispose());
     [this.chordReverb, this.chordAutoFilter, this.leadDelay, this.bassDistortion,
-     this.ambientVolume, this.masterGain, this.limiter
+     this.ambientVolume, this.masterGain, this.masterLowpass, this.masterHighpass, this.limiter
     ].forEach(n => n?.dispose());
     this.layerVolumes.forEach(v => v?.dispose());
     this.layerVolumes = [];
