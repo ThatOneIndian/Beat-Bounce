@@ -25,11 +25,11 @@ export const LANDMARKS = {
  * Dribble Detection Thresholds
  */
 export const DETECTION_CONFIG = {
-  // Normalized Y per millisecond — must be high enough to ignore hand tremor/breathing
-  MIN_VELOCITY_THRESHOLD: 0.0015,
+  // Normalized Y per millisecond — lower = more sensitive to wrist motion
+  MIN_VELOCITY_THRESHOLD: 0.0008,
 
   // Cooldown between dribbles (Prevents double triggers)
-  COOLDOWN_MS: 200,
+  COOLDOWN_MS: 150,
 
   // Audio detection sensitivity (3x noise floor)
   AUDIO_THRESHOLD_MULTIPLIER: 3,
@@ -45,23 +45,23 @@ export const DETECTION_CONFIG = {
 export const DIFFICULTY = {
   easy: {
     label: 'Easy',
-    perfectMs: 80,
-    greatMs: 160,
-    goodMs: 250,
+    perfectMs: 120,
+    greatMs: 220,
+    goodMs: 350,
     gradeThresholds: { S: 75, A: 60, B: 45, C: 30, D: 15 },
   },
   normal: {
     label: 'Normal',
-    perfectMs: 60,
-    greatMs: 120,
-    goodMs: 200,
+    perfectMs: 90,
+    greatMs: 180,
+    goodMs: 280,
     gradeThresholds: { S: 80, A: 65, B: 50, C: 35, D: 20 },
   },
   hard: {
     label: 'Hard',
-    perfectMs: 40,
-    greatMs: 90,
-    goodMs: 150,
+    perfectMs: 55,
+    greatMs: 120,
+    goodMs: 200,
     gradeThresholds: { S: 88, A: 72, B: 58, C: 42, D: 28 },
   },
 };
