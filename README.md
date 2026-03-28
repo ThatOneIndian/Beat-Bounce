@@ -74,7 +74,7 @@ A real-time basketball dribble-to-music rhythm game. Dribble a basketball in fro
 ```bash
 # Clone the repo
 git clone https://github.com/ThatOneIndian/Muse-Tiles.git
-cd Muse-Tiles
+cd Muse-Tiles  # repo name, project is BeatBounce
 
 # Install dependencies
 npm install
