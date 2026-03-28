@@ -57,7 +57,7 @@ export class TrackGenerator {
       const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
       
       if (!audioPart) {
-          throw new Error("Lyria returned a successful response, but the parts array contained no Audio binary. Did you select the right response Modality?");
+          throw new Error(`Lyria returned a successful response, but the parts array contained no Audio binary. Payload: ${JSON.stringify(data)}`);
       }
       
       return this._createBlobUrlFromBase64(audioPart.inlineData.data, audioPart.inlineData.mimeType);

@@ -145,6 +145,7 @@ function App() {
               
               skeletonRenderer.setScoreColor(scoreResult.rating);
               staticEngines.musicEngine.playHitSFX(scoreResult.rating);
+              beatIndicator.addSplash(scoreResult.rating);
               if (rhythm) staticEngines.musicEngine.updateTempo(Math.round(rhythm.bpm));
               
               currentStats = {
@@ -219,7 +220,7 @@ function App() {
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', padding: '2rem', paddingTop: '8rem' }}>
           <HUD {...stats} />
           <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
-          <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '16px', border: '1px solid var(--panel-border)', transform: 'scaleX(-1)' }}></canvas>
+          <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '16px', border: '1px solid var(--panel-border)' }}></canvas>
         </div>
       )}
     </div>
