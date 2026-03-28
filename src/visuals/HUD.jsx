@@ -54,6 +54,14 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
           30% { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
           100% { transform: translate(-50%, -50%) scale(1); opacity: 0.85; }
         }
+        @keyframes miss-shake {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+          15% { transform: translate(-45%, -50%) scale(1.1); opacity: 1; }
+          30% { transform: translate(-55%, -50%) scale(1); opacity: 1; }
+          45% { transform: translate(-48%, -50%) scale(1); opacity: 0.9; }
+          60% { transform: translate(-52%, -50%) scale(1); opacity: 0.8; }
+          100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
+        }
       `}</style>
 
       <div className="active-session" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, pointerEvents: 'none' }}>
@@ -286,18 +294,25 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
         </div>
 
         {/* Floating Rating */}
-        {rating && (
-          <div style={{
-            position: 'absolute', top: '50%', left: '50%',
-            fontSize: '3.5rem', fontWeight: 900, textTransform: 'uppercase',
-            color: rating === 'perfect' ? '#FFD700' : rating === 'great' ? '#00BFFF' : rating === 'good' ? '#00FF88' : '#FF2222',
-            textShadow: `0 0 30px ${rating === 'perfect' ? '#FFD700' : rating === 'great' ? '#00BFFF' : rating === 'good' ? '#00FF88' : '#FF2222'}80`,
-            pointerEvents: 'none', zIndex: 20,
-            animation: 'rating-pop 0.4s ease forwards',
-          }}>
-            {rating}!
-          </div>
-        )}
+        {rating && (() => {
+          const isMiss = ['miss', 'too late', 'too early'].includes(rating);
+          const color = rating === 'perfect' ? '#FFD700'
+            : rating === 'great' ? '#00BFFF'
+            : rating === 'good' ? '#00FF88'
+            : '#FF2222';
+          return (
+            <div key={Date.now()} style={{
+              position: 'absolute', top: isMiss ? '55%' : '50%', left: '50%',
+              fontSize: isMiss ? '2.5rem' : '3.5rem', fontWeight: 900, textTransform: 'uppercase',
+              color,
+              textShadow: `0 0 30px ${color}80`,
+              pointerEvents: 'none', zIndex: 20,
+              animation: isMiss ? 'miss-shake 0.5s ease forwards' : 'rating-pop 0.4s ease forwards',
+            }}>
+              {isMiss ? rating.toUpperCase() : `${rating}!`}
+            </div>
+          );
+        })()}
       </div>
     </>
   );

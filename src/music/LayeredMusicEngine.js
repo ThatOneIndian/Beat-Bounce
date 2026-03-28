@@ -176,6 +176,19 @@ export class LayeredMusicEngine {
     else if (rating === 'good') this.sfxSynth.triggerAttackRelease('F4', '16n');
   }
 
+  playMissSFX() {
+    if (!this.isInitialized) return;
+    // Buzzy low error tone like guitar hero miss
+    if (!this._missSynth) {
+      this._missSynth = new Tone.Synth({
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.01, decay: 0.15, sustain: 0, release: 0.1 },
+        volume: -18,
+      }).connect(this.masterGain);
+    }
+    this._missSynth.triggerAttackRelease('E2', '16n');
+  }
+
   // ── Lyria ambient ──
 
   async loadAmbient(urlOrBuffer, baseBPM) {

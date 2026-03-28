@@ -229,7 +229,7 @@ function App() {
       setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
 
       let performanceMeter = 50;
-      let lastCheckedBeatIndex = 0; // track which beats we've checked for misses
+      let lastBeatCheckTime = 0; // track when we last checked for misses
       let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy, meter: 50 };
 
       feedbackManager.startTrack(targetBPM, engines.musicEngine.gainNode);
@@ -271,34 +271,60 @@ function App() {
               visEvent = engines.dribbleDetector.processFrame(landmarks, timestamp);
             }
 
-            // Check for missed beats — decay meter when beats pass without a dribble
+            // Check for missed beats using a time-based tracker (not beat array which gets cleaned)
             const beatInterval = 60000 / engines.beatGrid.bpm;
-            const missWindow = beatInterval * 0.6; // beat is "missed" after 60% of interval passes
-            const passedBeats = engines.beatGrid.beats.filter(b => b < timestamp - missWindow);
-            const newMisses = passedBeats.length - lastCheckedBeatIndex;
-            if (newMisses > 0) {
-              lastCheckedBeatIndex = passedBeats.length;
-              performanceMeter = Math.max(0, performanceMeter - (newMisses * 4));
+            const missWindow = beatInterval * 0.7;
+            if (!lastBeatCheckTime) lastBeatCheckTime = timestamp;
+            const timeSinceLastCheck = timestamp - lastBeatCheckTime;
+            const missedBeatsCount = Math.floor(timeSinceLastCheck / (beatInterval + missWindow));
+
+            if (missedBeatsCount > 0 && timeSinceLastCheck > beatInterval + missWindow) {
+              lastBeatCheckTime = timestamp;
+              // Harsh meter penalty — each missed beat costs 8 points
+              performanceMeter = Math.max(0, performanceMeter - (missedBeatsCount * 8));
+              // Break combo on miss
+              engines.beatScorer.combo = 0;
+              engines.beatScorer.multiplier = 1;
+              engines.beatScorer.hitCounts.miss += missedBeatsCount;
+              // Score penalty — lose 25 points per missed beat
+              engines.beatScorer.totalScore = Math.max(0, engines.beatScorer.totalScore - (missedBeatsCount * 25));
               if (engines.musicEngine.setPerformanceLevel) {
                 const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
                 engines.musicEngine.setPerformanceLevel(meterCombo);
               }
-              currentStats = { ...currentStats, meter: performanceMeter };
+              // Play miss SFX
+              engines.musicEngine.playMissSFX();
+              // Show miss popup
+              currentStats = {
+                ...currentStats,
+                score: engines.beatScorer.totalScore,
+                combo: 0,
+                rating: 'miss',
+                meter: performanceMeter
+              };
               setStats({ ...currentStats });
+              setTimeout(() => {
+                setStats(s => s.rating === 'miss' ? { ...s, rating: null } : s);
+              }, 600);
             }
 
             const audEvent = engines.audioDetector.detect(timestamp);
             const fused = engines.sensorFusion.process(visEvent, audEvent, timestamp);
 
             if (fused.detected) {
+              lastBeatCheckTime = timestamp; // reset miss timer on successful dribble
               const rhythm = engines.rhythmEngine.onDribble(fused.timestamp);
               const scoreResult = engines.beatScorer.scoreDribble(fused.timestamp);
 
-              // Update performance meter
-              if (scoreResult.rating === 'perfect') performanceMeter += 8;
-              else if (scoreResult.rating === 'great') performanceMeter += 5;
-              else if (scoreResult.rating === 'good') performanceMeter += 2;
-              else performanceMeter -= 12;
+              // Update performance meter — gains are modest, losses are harsh (guitar hero style)
+              if (scoreResult.rating === 'perfect') performanceMeter += 6;
+              else if (scoreResult.rating === 'great') performanceMeter += 3;
+              else if (scoreResult.rating === 'good') performanceMeter += 1;
+              else {
+                performanceMeter -= 15;
+                engines.musicEngine.playMissSFX();
+                scoreResult.rating = 'too late'; // show "too late" instead of generic "miss"
+              }
               performanceMeter = Math.max(0, Math.min(100, performanceMeter));
 
               // Integrated feedback (from main)
