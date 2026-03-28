@@ -30,7 +30,7 @@ function ConfigPanel({ initialConfig, onStart, mediaStream }) {
     <div style={{ display: 'flex', gap: '2rem', height: 'calc(100vh - 4rem)' }}>
       {/* Left side: Camera Preview */}
       <div className="glass-panel" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
-        <h2 style={{ marginBottom: '1rem', color: 'var(--accent-color)' }}>MuseMotion</h2>
+        <h2 style={{ marginBottom: '1rem', color: 'var(--accent-color)' }}>BeatBounce</h2>
         <div style={{ 
           flex: 1, 
           background: '#000', 
