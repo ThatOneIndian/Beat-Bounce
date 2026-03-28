@@ -33,86 +33,78 @@ export class DribbleDetector {
   constructor() {
     this.leftTracker = new VelocityTracker();
     this.rightTracker = new VelocityTracker();
+    this.ballTracker = new VelocityTracker();
     
     this.prevLeftVelocity = 0;
     this.prevRightVelocity = 0;
+    this.prevBallVelocity = 0;
     
     this.lastDribbleTime = 0;
-    this.MIN_DRIBBLE_INTERVAL = 200;  // ms — prevents double-triggers (max ~300 BPM)
-    this.MIN_VELOCITY_THRESHOLD = 0.001; // Normalized units/ms threshold - Needs tuning
-    
-    // Which hand is dribbling
-    this.dominantHand = null;
-    this.leftDribbleCount = 0;
-    this.rightDribbleCount = 0;
+    this.MIN_DRIBBLE_INTERVAL = 250; 
+    this.MIN_VELOCITY_THRESHOLD = 0.001;
+    this.floorY = 0.9; // Default starting assumption
   }
 
-  // Convert MediaPipe coords [0, 1] to a metric format
-  extractWristData(landmarks) {
-    return {
-      left: {
-        y: landmarks[15].y,
-        z: landmarks[15].z,
-        visibility: landmarks[15].visibility
-      },
-      right: {
-        y: landmarks[16].y,
-        z: landmarks[16].z,
-        visibility: landmarks[16].visibility
-      }
-    };
+  updateFloorHeight(landmarks) {
+    if (!landmarks) return;
+    // Ankles (27, 28), Heels (29, 30), and Toes (31, 32)
+    const footIndices = [27, 28, 29, 30, 31, 32];
+    const footYs = footIndices.map(i => landmarks[i].y).filter(y => y > 0);
+    if (footYs.length > 0) {
+      // Estimate floor as the lowest foot point detected
+      const currentFloor = Math.max(...footYs);
+      // Smooth the floor height estimate
+      this.floorY = this.floorY * 0.95 + currentFloor * 0.05;
+    }
   }
 
-  processFrame(landmarks, timestamp) {
-    if (!landmarks || landmarks.length < 17) return { detected: false };
+  processFrame(poseLandmarks, ballPos, timestamp) {
+    this.updateFloorHeight(poseLandmarks);
 
-    const wrists = this.extractWristData(landmarks);
-    
-    // MediaPipe Y is top-down (0 at top, 1 at bottom). Moving down = positive velocity.
-    const leftVelocity = this.leftTracker.update(wrists.left.y, timestamp);
-    const rightVelocity = this.rightTracker.update(wrists.right.y, timestamp);
-    
     let dribbleDetected = false;
     let dribbleHand = null;
-    
-    // Check left wrist for zero-crossing (downward → upward)
-    if (this.prevLeftVelocity > this.MIN_VELOCITY_THRESHOLD && leftVelocity <= 0) {
-      if (timestamp - this.lastDribbleTime > this.MIN_DRIBBLE_INTERVAL) {
-        dribbleDetected = true;
-        dribbleHand = 'left';
-        this.leftDribbleCount++;
+    let impactY = 0;
+
+    // We still track wrists for synchronization, but the ball is the "source of truth"
+    const wrists = poseLandmarks ? {
+       left: { y: poseLandmarks[15].y, visibility: poseLandmarks[15].visibility },
+       right: { y: poseLandmarks[16].y, visibility: poseLandmarks[16].visibility }
+    } : null;
+
+    if (ballPos) {
+      const ballVelocity = this.ballTracker.update(ballPos.y, timestamp);
+      
+      // Detection Logic: Velocity reverses direction from down to up (pos -> neg)
+      // AND the ball is within the bottom 15% of the estimated body height (near floor)
+      const isNearFloor = ballPos.y > (this.floorY - 0.15); 
+      
+      if (isNearFloor && this.prevBallVelocity > 0 && ballVelocity <= 0) {
+        if (timestamp - this.lastDribbleTime > this.MIN_DRIBBLE_INTERVAL) {
+          dribbleDetected = true;
+          impactY = ballPos.y;
+          
+          // Determine which hand was likely responsible based on proximity
+          if (wrists) {
+            const distLeft = Math.abs(ballPos.x - (1 - poseLandmarks[15].x));
+            const distRight = Math.abs(ballPos.x - (1 - poseLandmarks[16].x));
+            dribbleHand = distLeft < distRight ? 'left' : 'right';
+          }
+        }
       }
+      this.prevBallVelocity = ballVelocity;
     }
-    
-    // Check right wrist for zero-crossing
-    if (this.prevRightVelocity > this.MIN_VELOCITY_THRESHOLD && rightVelocity <= 0) {
-      if (timestamp - this.lastDribbleTime > this.MIN_DRIBBLE_INTERVAL) {
-        dribbleDetected = true;
-        dribbleHand = 'right';
-        this.rightDribbleCount++;
-      }
-    }
-    
+
     if (dribbleDetected) {
       this.lastDribbleTime = timestamp;
-      
-      // Auto-detect dominant hand after 10 dribbles
-      if (this.leftDribbleCount + this.rightDribbleCount > 10) {
-        this.dominantHand = this.leftDribbleCount > this.rightDribbleCount 
-          ? 'left' : 'right';
-      }
     }
-    
-    this.prevLeftVelocity = leftVelocity;
-    this.prevRightVelocity = rightVelocity;
-    
+
     return {
       detected: dribbleDetected,
       hand: dribbleHand,
       timestamp: timestamp,
-      velocityMagnitude: dribbleHand === 'left' 
-        ? Math.abs(this.prevLeftVelocity) 
-        : Math.abs(this.prevRightVelocity),
+      impactY: impactY,
+      floorY: this.floorY,
+      ballPos: ballPos,
       wristPositions: wrists
     };
   }

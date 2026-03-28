@@ -1,35 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import ConfigPanel from './config/ConfigPanel';
-import HUD from './visuals/HUD';
 import { PoseTracker } from './tracking/PoseTracker';
 import { DribbleDetector } from './tracking/DribbleDetector';
 import { RhythmEngine } from './tracking/RhythmEngine';
-import { BeatGrid } from './music/BeatGrid';
 import { AdaptiveMusicEngine } from './music/AdaptiveMusicEngine';
-import { BeatScorer } from './scoring/BeatScorer';
-import { SkeletonRenderer } from './visuals/SkeletonRenderer';
-import { BeatIndicator } from './visuals/BeatIndicator';
-import { AudioDribbleDetector } from './tracking/AudioDetector';
-import { SensorFusion } from './tracking/SensorFusion';
 import { TrackGenerator } from './music/TrackGenerator';
-import { GeminiLiveClassifier } from './ai/GeminiLiveClassifier';
+import { BallTracker } from './tracking/BallTracker';
+import { SkeletonRenderer } from './visuals/SkeletonRenderer';
 import './index.css';
 
-// Keep instances outside React state to avoid re-renders disrupting the tight loop
-let staticEngines = {
-  poseTracker: new PoseTracker(),
-  dribbleDetector: new DribbleDetector(),
-  audioDetector: new AudioDribbleDetector(),
-  rhythmEngine: new RhythmEngine(),
-  beatGrid: new BeatGrid(),
-  musicEngine: new AdaptiveMusicEngine()
-};
-staticEngines.beatScorer = new BeatScorer(staticEngines.beatGrid);
-staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
-staticEngines.geminiLive = new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
-
 function App() {
-  const [appState, setAppState] = useState('config'); // config, generating, countdown, active, error
+  const [appState, setAppState] = useState('config'); // config, generating, countdown, active, summary
   const [config, setConfig] = useState({
     genre: 'hip-hop',
     energy: 7,
@@ -38,206 +19,260 @@ function App() {
     instruments: ['drums', 'bass'],
     duration_seconds: 90
   });
-
-  const [stats, setStats] = useState({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: 5 });
-  const [errorMessage, setErrorMessage] = useState("");
+  
+  // Real-time Game State
+  const [score, setScore] = useState(0);
+  const [liveBpm, setLiveBpm] = useState('--');
+  const [combo, setCombo] = useState(0);
+  const [generatingStatus, setGeneratingStatus] = useState('Initializing AI...');
   const [mediaStream, setMediaStream] = useState(null);
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const reqRef = useRef(null);
-
-  // Setup webcam preview early
+  
+  // Persistence for Engines
+  const poseTracker = useRef(new PoseTracker());
+  const dribbleDetector = useRef(new DribbleDetector());
+  const rhythmEngine = useRef(new RhythmEngine());
+  const musicEngine = useRef(new AdaptiveMusicEngine());
+  const ballTracker = useRef(new BallTracker());
+  const trackGenerator = useRef(new TrackGenerator());
+  const skeletonRenderer = useRef(null);
+  const requestRef = useRef();
+  
+  // Setup webcam preview
   useEffect(() => {
+    let stream = null;
     async function setupCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          audio: true 
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: 1280, height: 720 },
+          audio: false // audio not needed for tracking
         });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
         setMediaStream(stream);
-        staticEngines.audioDetector.init(stream);
       } catch (err) {
-        console.error("Failed to access camera/mic:", err);
+        console.error("Failed to access camera:", err);
       }
     }
     setupCamera();
-  }, []);
-
-  // Ensure any active videoRef instances always get the stream when re-rendered
-  useEffect(() => {
-    if (videoRef.current && mediaStream && videoRef.current.srcObject !== mediaStream) {
-      videoRef.current.srcObject = mediaStream;
-      videoRef.current.onloadedmetadata = () => {
-        videoRef.current.play().catch(e => console.warn("Video autplay blocked", e));
-      };
-    }
-  });
-
-  const handleQuit = () => {
-    staticEngines.musicEngine.stopAll();
-    setAppState('config');
-    setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy });
-  };
+    
+    // Cleanup stream on unmount
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [appState]); // Re-attach when state changes as video element might remount
 
   const handleStart = async (newConfig) => {
     setConfig(newConfig);
     setAppState('generating');
     
-    await staticEngines.poseTracker.initialize();
-    await staticEngines.musicEngine.initialize();
-    await staticEngines.geminiLive.connect();
-    
-    const targetBPM = Math.round((newConfig.tempo_range.min + newConfig.tempo_range.max) / 2);
-    
     try {
-      const trackUrl = await staticEngines.trackGen.generateTrack(targetBPM, newConfig);
-      await staticEngines.musicEngine.loadTrack(targetBPM, trackUrl);
-      staticEngines.musicEngine.playTrack(targetBPM);
+      // Initialize engines early to handle browser security (Tone.js needs user gesture)
+      await musicEngine.current.initialize();
+      await poseTracker.current.initialize();
+      await ballTracker.current.initialize();
+      
+      const targetBPM = (newConfig.tempo_range.min + newConfig.tempo_range.max) / 2;
+      const buffer = await trackGenerator.current.generateTrack(targetBPM, newConfig);
+
+      if (buffer) {
+        // Load real Lyria track
+        await musicEngine.current.loadTrack(targetBPM, buffer);
+      } else {
+        // Fallback to Metronome if Lyria fails or is filtered
+        console.warn("Lyria generation failed or filtered, using metronome.");
+        musicEngine.current.startMetronome(newConfig.tempo_range.min, newConfig);
+      }
+
       setAppState('countdown');
     } catch (err) {
-      console.error(err);
-      setErrorMessage(err.message || "Unknown error generating Lyria track.");
-      setAppState('error');
+      console.error("Critical failure during session startup:", err);
+      // Ensure we still proceed to config or error state instead of hanging
+      setAppState('config');
+      alert("Failed to start session. Check your internet and API key.");
     }
   };
 
+  // Cycle through generation status messages
+  useEffect(() => {
+    if (appState !== 'generating') return;
+    
+    const messages = [
+      "Slicing rhythmic beats...",
+      "Baking 90s basslines...",
+      "Mastering drum textures...",
+      "Synthesizing atmosphere...",
+      "Finalizing composition...",
+      "Polishing audio grit..."
+    ];
+    let idx = 0;
+    
+    const interval = setInterval(() => {
+      idx = (idx + 1) % messages.length;
+      setGeneratingStatus(messages[idx]);
+    }, 4000);
+    
+    return () => clearInterval(interval);
+  }, [appState]);
+
   useEffect(() => {
     if (appState === 'countdown') {
-      setTimeout(() => setAppState('active'), 3000); // 3-second countdown
+      setTimeout(() => {
+        setAppState('active');
+      }, 3000); 
     }
   }, [appState]);
 
-  // Main game loop fixes the freeze!
+  // Main Motion Engine Loop
+  const engineLoop = (timestamp) => {
+    if (appState !== 'active') return;
+
+    if (videoRef.current && canvasRef.current) {
+        const landmarks = poseTracker.current.processFrame(videoRef.current, timestamp);
+        const ballPos = ballTracker.current.processFrame(videoRef.current, timestamp);
+        
+        if (landmarks || ballPos) {
+            // Draw skeleton
+            if (skeletonRenderer.current) {
+                // No clearRect needed because drawImage covers the whole frame
+                skeletonRenderer.current.render(videoRef.current, landmarks, ballPos);
+            }
+
+            // Detect Dribbles
+            const result = dribbleDetector.current.processFrame(landmarks, ballPos, timestamp);
+            if (result.detected) {
+                const bpmInfo = rhythmEngine.current.onDribble(timestamp);
+                if (bpmInfo) {
+                    setLiveBpm(bpmInfo.bpm);
+                    musicEngine.current.updateTempo(bpmInfo.bpm);
+                    
+                    // Simple scoring logic for now
+                    setScore(prev => prev + 10);
+                    setCombo(prev => prev + 1);
+                }
+            }
+        }
+    }
+    
+    requestRef.current = requestAnimationFrame(engineLoop);
+  };
+
   useEffect(() => {
     if (appState === 'active') {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      const video = videoRef.current;
-      
-      if (!canvas || !ctx || !video) return;
-
-      const skeletonRenderer = new SkeletonRenderer(canvas);
-      const beatIndicator = new BeatIndicator(canvas, staticEngines.beatGrid);
-
-      const targetBPM = Math.round((config.tempo_range.min + config.tempo_range.max) / 2);
-      staticEngines.beatGrid.initialize(targetBPM, performance.now());
-      setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
-
-      let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy };
-
-      const renderLoop = (timestamp) => {
-        // Only attempt to draw or parse if the video element has loaded frames
-        if (video.readyState >= 2) { // HAVE_CURRENT_DATA or higher
-          // Draw video background
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.save();
-          ctx.scale(-1, 1);
-          ctx.translate(-canvas.width, 0);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
-
-          // Tracker processing
-          const landmarks = staticEngines.poseTracker.processFrame(video, timestamp);
-          if (landmarks) {
-            const visEvent = staticEngines.dribbleDetector.processFrame(landmarks, timestamp);
-            const audEvent = staticEngines.audioDetector.detect(timestamp);
-            
-            const fused = SensorFusion.fuseDribbleSignals(visEvent, audEvent);
-            
-            if (fused.detected) {
-              const rhythm = staticEngines.rhythmEngine.onDribble(fused.timestamp);
-              const scoreResult = staticEngines.beatScorer.scoreDribble(fused.timestamp);
-              
-              skeletonRenderer.setScoreColor(scoreResult.rating);
-              staticEngines.musicEngine.playHitSFX(scoreResult.rating);
-              beatIndicator.addSplash(scoreResult.rating);
-              if (rhythm) staticEngines.musicEngine.updateTempo(Math.round(rhythm.bpm));
-              
-              currentStats = {
-                 score: scoreResult.totalScore,
-                 combo: scoreResult.combo,
-                 maxCombo: scoreResult.maxCombo,
-                 rating: scoreResult.rating,
-                 bpm: rhythm ? Math.round(rhythm.bpm) : currentStats.bpm,
-                 energy: config.energy
-              };
-              
-              // Push update to React
-              setStats({...currentStats});
-              
-              setTimeout(() => {
-                setStats(s => s.rating === scoreResult.rating ? {...s, rating: null} : s);
-              }, 500);
-            }
-            skeletonRenderer.render(landmarks);
-            
-            // Stream compressed frame to Gemini once per second
-            staticEngines.geminiLive.maybeSendFrame(canvas, timestamp);
-          } else {
-             // In case landmarks are temporarily lost, clear the old skeleton but keep drawing background
-             skeletonRenderer.render([]);
-          }
+        if (canvasRef.current) {
+            skeletonRenderer.current = new SkeletonRenderer(canvasRef.current);
         }
-
-        // Draw Beat highway
-        beatIndicator.render(performance.now());
-        reqRef.current = requestAnimationFrame(renderLoop);
-      };
-
-      reqRef.current = requestAnimationFrame(renderLoop);
-
-      return () => {
-        cancelAnimationFrame(reqRef.current);
-      };
+        requestRef.current = requestAnimationFrame(engineLoop);
     }
-  }, [appState, config]);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [appState]);
+
+  const handleQuit = () => {
+    musicEngine.current.stopAll();
+    setAppState('config');
+    setScore(0);
+    setLiveBpm('--');
+    setCombo(0);
+  };
 
   return (
     <div className="app-container" style={{ width: '100%', height: '100%', padding: '2rem', boxSizing: 'border-box' }}>
-      <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '40vw', height: '40vw', background: 'radial-gradient(circle, rgba(0,255,204,0.1) 0%, rgba(0,0,0,0) 70%)', zIndex: -1 }}></div>
       
-      {appState === 'config' && <ConfigPanel initialConfig={config} onStart={handleStart} mediaStream={mediaStream} />}
-
-      {appState === 'generating' && (
-        <div className="glass-panel" style={{ height: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="loader" style={{ width: '64px', height: '64px', borderRadius: '50%', border: '4px solid var(--panel-border)', borderTopColor: 'var(--accent-color)', animation: 'spin 1s linear infinite' }}></div>
-          <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
-          <h2>Generating Lyria 3 Track...</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>Hold tight, this may take up to 30 seconds for audio inference.</p>
-        </div>
+      {/* Background glow effects */}
+      <div style={{
+        position: 'absolute', top: '-10%', left: '-10%', width: '40vw', height: '40vw',
+        background: 'radial-gradient(circle, rgba(0,255,204,0.1) 0%, rgba(0,0,0,0) 70%)',
+        zIndex: -1
+      }}></div>
+      
+      {appState === 'config' && (
+        <ConfigPanel 
+          initialConfig={config} 
+          onStart={handleStart} 
+          mediaStream={mediaStream} 
+        />
       )}
 
-      {appState === 'error' && (
-        <div className="glass-panel" style={{ height: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <h2 style={{ color: '#FF4444' }}>Lyria Generation Failed</h2>
-          <p style={{ color: 'var(--text-secondary)', maxWidth: '600px', textAlign: 'center' }}>{errorMessage}</p>
-          <button style={{ marginTop: '2rem' }} onClick={() => setAppState('config')}>Go Back</button>
+      {appState === 'generating' && (
+        <div className="glass-panel" style={{ height: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1.5rem' }}>
+          <div className="loader" style={{
+            width: '64px', height: '64px', borderRadius: '50%', border: '4px solid var(--panel-border)', borderTopColor: 'var(--accent-color)', animation: 'spin 1.5s linear infinite'
+          }}></div>
+          <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+          <div style={{ textAlign: 'center' }}>
+            <h2 style={{ margin: 0, color: 'var(--text-color)', letterSpacing: '1px' }}>COMPOSING SESSION</h2>
+            <p style={{ color: 'var(--accent-color)', marginTop: '0.8rem', opacity: 0.8, fontFamily: 'monospace', fontSize: '1.1rem' }}>
+              {generatingStatus}
+            </p>
+          </div>
         </div>
       )}
 
       {appState === 'countdown' && (
         <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <h1 style={{ fontSize: '8rem', color: 'var(--accent-color)', textShadow: '0 0 32px var(--accent-color)' }}>GET READY</h1>
+          <h1 style={{ fontSize: '8rem', color: 'var(--accent-color)', textShadow: '0 0 32px var(--accent-color)' }}>
+            GET READY
+          </h1>
+        </div>
+      )}
+
+      {(appState === 'active' || appState === 'countdown' || appState === 'generating') && (
+        <div style={{ position: 'fixed', bottom: 20, right: 20, zIndex: -1, opacity: 0.1 }}>
+            <video ref={videoRef} autoPlay playsInline muted style={{ borderRadius: '16px', border: '2px solid #fff' }}></video>
         </div>
       )}
 
       {appState === 'active' && (
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', padding: '2rem', paddingTop: '8rem' }}>
-          <button 
-            onClick={handleQuit}
-            className="glass-panel"
-            style={{ 
-              position: 'fixed', top: '2rem', left: '2rem', padding: '0.8rem 1.5rem', 
-              color: '#ff4444', border: '1px solid rgba(255, 68, 68, 0.3)', 
-              cursor: 'pointer', fontWeight: 600, zIndex: 100 
-            }}
-          >
-            QUIT SESSION
-          </button>
-          <HUD {...stats} />
-          <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
-          <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '16px', border: '1px solid var(--panel-border)' }}></canvas>
+        <div className="active-session" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+             <button
+               onClick={handleQuit}
+               className="glass-panel"
+               style={{
+                 padding: '0.5rem 1rem',
+                 background: 'rgba(255, 68, 68, 0.1)',
+                 border: '1px solid rgba(255, 68, 68, 0.3)',
+                 color: '#ff4444',
+                 borderRadius: '8px',
+                 cursor: 'pointer',
+                 fontWeight: 600,
+                 fontSize: '0.8rem',
+                 textTransform: 'uppercase'
+               }}
+             >
+               Quit Session
+             </button>
+             <div className="glass-panel" style={{ padding: '1rem 2rem' }}>
+                <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Score</h3>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800 }}>{score}</div>
+             </div>
+             <div className="glass-panel" style={{ padding: '1rem 2rem', textAlign: 'center' }}>
+                <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>BPM</h3>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--accent-color)' }}>{liveBpm}</div>
+             </div>
+             <div className="glass-panel" style={{ padding: '1rem 2rem', textAlign: 'right' }}>
+                <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Combo</h3>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800 }}>{combo || '--'}</div>
+             </div>
+          </header>
+
+          <div style={{ flex: 1, position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
+            <canvas ref={canvasRef} width={1280} height={720} style={{
+              width: '100%', maxHeight: '60vh', objectFit: 'contain',
+              borderRadius: '16px', border: '1px solid var(--panel-border)'
+            }}></canvas>
+          </div>
+
+          <div className="glass-panel" style={{ marginTop: '2rem', height: '80px', position: 'relative', overflow: 'hidden' }}>
+             {/* Beat indicator bar placeholder */}
+             <div style={{ position: 'absolute', left: '20%', top: 0, bottom: 0, width: '4px', background: 'rgba(255,255,255,0.8)', boxShadow: '0 0 12px #fff' }}></div>
+          </div>
         </div>
       )}
     </div>
