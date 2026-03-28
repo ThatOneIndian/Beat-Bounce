@@ -1,110 +1,145 @@
+class Particle {
+  constructor(x, y, color) {
+    this.x = x;
+    this.y = y;
+    this.color = color;
+    this.vx = (Math.random() - 0.5) * 15;
+    this.vy = (Math.random() - 0.5) * 15;
+    this.alpha = 1;
+    this.life = 1.0;
+  }
+  update(dt) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= dt * 2;
+    this.alpha = Math.max(0, this.life);
+  }
+  draw(ctx) {
+    ctx.globalAlpha = this.alpha;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 export class BeatIndicator {
   constructor(canvas, beatGrid) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.beatGrid = beatGrid;
-    this.barWidth = canvas.width;
-    this.barHeight = 40;
-    this.barY = canvas.height - 50;
-    this.lookAheadMs = 2000;  // show 2 seconds of upcoming beats
-    this.splashes = [];
+    this.laneY = canvas.height * 0.85;
+    this.hitX = canvas.width * 0.15;
+    this.laneHeight = 90;
+    this.lookAheadMs = 2000;
+    this.particles = [];
+    this.lastTime = performance.now();
+    this.hitPulseTime = 0; // ms
   }
 
-  addSplash(rating, x, y) {
-    this.splashes.push({
-      rating,
-      x: x || this.barWidth / 2,
-      y: y || this.barY - 50,
-      createdAt: performance.now(),
-      lifetime: 800 // ms
-    });
+  triggerHit() {
+    this.hitPulseTime = performance.now();
   }
 
-  render(currentTime) {
+  addSplash(rating) {
+    this.triggerHit(); // Lighting up the line too
+    const colors = { perfect: '#FFD700', great: '#00BFFF', good: '#00FF00' };
+    const color = colors[rating] || '#FFF';
+    for (let i = 0; i < 20; i++) {
+      this.particles.push(new Particle(this.hitX, this.laneY + this.laneHeight / 2, color));
+    }
+  }
+
+  render(nowMs) {
     const ctx = this.ctx;
-    
-    // Draw background gradient to make notes pop against user's shoes/floor
-    const gradient = ctx.createLinearGradient(0, this.barY - 40, 0, this.barY + this.barHeight + 20);
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.7)');
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.9)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, this.barY - 40, this.barWidth, this.barHeight + 60);
+    const now = performance.now();
+    const dt = (now - this.lastTime) / 1000;
+    this.lastTime = now;
 
-    // Draw center line (the "hit zone") with a neon cyan glow
-    const centerX = this.barWidth * 0.2;  // hit zone at 20% from left
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = '#00FFFF'; // Neon Cyan
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 4;
+    // Draw Lane Boundaries (The "Highway")
+    ctx.save();
+    
+    // Draw base horizon line
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(0, 255, 204, 0.5)';
+    ctx.strokeStyle = 'rgba(0, 255, 204, 0.4)';
+    ctx.lineWidth = 3;
+    
     ctx.beginPath();
-    ctx.moveTo(centerX, this.barY - 10);
-    ctx.lineTo(centerX, this.barY + this.barHeight + 10);
+    ctx.moveTo(0, this.laneY);
+    ctx.lineTo(this.canvas.width, this.laneY);
+    ctx.moveTo(0, this.laneY + this.laneHeight);
+    ctx.lineTo(this.canvas.width, this.laneY + this.laneHeight);
+    ctx.stroke();
+
+    // Center "Path" line
+    ctx.setLineDash([10, 20]);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.beginPath();
+    ctx.moveTo(0, this.laneY + this.laneHeight / 2);
+    ctx.lineTo(this.canvas.width, this.laneY + this.laneHeight / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Hit Zone (The "Aperture")
+    const hitAge = now - this.hitPulseTime;
+    const hitApertureGlow = Math.max(0, 1 - (hitAge / 250));
+    const apertureSize = 5 + (hitApertureGlow * 15);
+    
+    ctx.shadowBlur = apertureSize + 10;
+    ctx.shadowColor = hitApertureGlow > 0 ? '#FFD700' : '#00FFCC';
+    ctx.strokeStyle = '#FFF';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(this.hitX, this.laneY - 10);
+    ctx.lineTo(this.hitX, this.laneY + this.laneHeight + 10);
     ctx.stroke();
     
-    // Reset shadow before drawing notes
-    ctx.shadowBlur = 0;
-    
-    // Draw upcoming beat markers scrolling from right to left
-    const upcomingBeats = this.beatGrid.getUpcomingBeats(currentTime, 10);
-    
-    for (const beat of upcomingBeats) {
-      // Map time to X position
-      const progress = beat.relativeMs / this.lookAheadMs;
-      const x = centerX + (progress * (this.barWidth - centerX));
-      
-      if (x < 0 || x > this.barWidth) continue;
-      
-      // Dynamic glowing note
-      ctx.shadowBlur = progress < 0.1 ? 25 : 10;
-      ctx.shadowColor = progress < 0.1 ? '#FF00FF' : '#00FFFF'; // Pink when in hit zone, cyan otherwise
-      ctx.fillStyle = progress < 0.1 ? '#FFFFFF' : 'rgba(255, 255, 255, 0.9)';
-      
-      const size = progress < 0.1 ? 14 : 10; // expand slightly when reaching hit zone
-      
+    // Glowing Hit Line Pulse
+    if (hitApertureGlow > 0) {
+      ctx.globalAlpha = hitApertureGlow;
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 12;
       ctx.beginPath();
-      // Neon circles jumping along the track
-      ctx.arc(x, this.barY + this.barHeight / 2, size, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(this.hitX, this.laneY - 40);
+      ctx.lineTo(this.hitX, this.laneY + this.laneHeight + 40);
+      ctx.stroke();
+      ctx.globalAlpha = 1.0;
     }
-    
-    ctx.shadowBlur = 0; // reset
-    
-    // Draw splashes
-    const now = performance.now();
-    for (let i = this.splashes.length - 1; i >= 0; i--) {
-      const s = this.splashes[i];
-      const age = now - s.createdAt;
-      if (age > s.lifetime) {
-        this.splashes.splice(i, 1);
-        continue;
-      }
-      
-      const progress = age / s.lifetime;
-      const alpha = Math.max(0, 1 - progress);
-      const floatY = s.y - (progress * 60); // float up 60px
-      const scale = 1 + (progress * 0.5); // expand slightly
 
-      ctx.save();
-      ctx.translate(s.x, floatY);
-      ctx.scale(scale, scale);
+    // Upcoming Beats
+    const tracks = this.beatGrid.getUpcomingBeats(nowMs, 8);
+    for (const b of tracks) {
+      const x = this.hitX + (b.relativeMs / this.lookAheadMs) * (this.canvas.width - this.hitX);
       
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = 'bold 48px "Inter", sans-serif';
-      
-      let color = '#FFFFFF';
-      if (s.rating === 'perfect') color = '#00FFFF'; // cyan
-      else if (s.rating === 'great') color = '#FF00FF'; // magenta
-      else if (s.rating === 'good') color = '#FFD700'; // gold
-      else if (s.rating === 'miss') color = '#FF4444'; // red
-      
+      if (x < 0 || x > this.canvas.width) continue;
+
+      // Draw high-impact beat marker
       ctx.shadowBlur = 15;
-      ctx.shadowColor = color;
-      ctx.fillStyle = color;
-      ctx.globalAlpha = alpha;
-      ctx.fillText(s.rating.toUpperCase(), 0, 0);
-      ctx.restore();
+      ctx.shadowColor = '#00FFCC';
+      ctx.fillStyle = '#FFF';
+      ctx.beginPath();
+      ctx.arc(x, this.laneY + this.laneHeight / 2, 22, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Pulse outer ring
+      ctx.strokeStyle = 'rgba(0, 255, 204, 0.6)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, this.laneY + this.laneHeight / 2, 30, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Draw Particles
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.update(dt);
+      if (p.alpha <= 0) {
+        this.particles.splice(i, 1);
+      } else {
+        p.draw(ctx);
+      }
     }
   }
 }

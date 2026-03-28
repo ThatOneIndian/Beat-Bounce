@@ -58,56 +58,88 @@ export class TrackGenerator {
 
   async generateTrack(bpm, config) {
     const prompt = this.buildLyriaPrompt(config, bpm);
-    console.log(`[Lyria] Generating ${bpm} BPM track:`, prompt);
+    console.info(`[Lyria] Starting generation for ${config.genre} @ ${bpm} BPM...`);
     
     if (!this.apiKey) {
        throw new Error("No API key provided. Cannot generate Lyria audio.");
     }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 50000); // 50s timeout
     
     try {
+      const requestBody = {
+        contents: [{
+          role: "user",
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          responseModalities: ["AUDIO", "TEXT"],
+          temperature: 1.0,
+          topP: 0.95,
+          topK: 40,
+          maxOutputTokens: 2048
+        }
+      };
+
+      console.info("[Lyria] Dispatching POST request to Generative Language API...");
       const response = await fetch(this.lyriaEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ 
-            role: "user", 
-            parts: [{ text: prompt }] 
-          }],
-          generationConfig: {
-              responseModalities: ["AUDIO", "TEXT"]
-          }
-        })
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errText = await response.text();
+        console.error(`[Lyria] API Error ${response.status}:`, errText);
         throw new Error(`Lyria API rejected the request (${response.status}): ${errText}`);
       }
 
+      console.info("[Lyria] Response received. Parsing JSON payload...");
       const data = await response.json();
-      console.log("Lyria Generation Complete!");
       
       const parts = data?.candidates?.[0]?.content?.parts || [];
       const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
       
       if (!audioPart) {
-          throw new Error(`Lyria returned a successful response, but the parts array contained no Audio binary. Payload: ${JSON.stringify(data)}`);
+          console.warn("[Lyria] No audio binary found in response parts.", parts);
+          throw new Error("Lyria returned a successful response, but it contained no Audio binary. Check prompt/safety filters.");
       }
-      
+
+      console.info(`[Lyria] Successfully extracted ${audioPart.inlineData.mimeType} binary data.`);
       return this._createBlobUrlFromBase64(audioPart.inlineData.data, audioPart.inlineData.mimeType);
       
     } catch (e) {
-      console.error("Lyria generation failed entirely", e);
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        console.error("[Lyria] Request timed out after 50 seconds.");
+        throw new Error("Lyria API timed out. The server might be overloaded. Try again in a moment.");
+      }
+      console.error("[Lyria] Generation failed entirely:", e);
       throw e;
     }
   }
 
   _createBlobUrlFromBase64(base64, mimeType) {
-    const binary = atob(base64);
-    const array = new Uint8Array(binary.length);
-    for( let i = 0; i < binary.length; i++ ) { array[i] = binary.charCodeAt(i); }
-    const blob = new Blob([array], { type: mimeType });
-    return URL.createObjectURL(blob);
+    if (!base64 || base64.length < 100) {
+      throw new Error("Invalid audio data: Base64 string too short or missing.");
+    }
+    
+    try {
+      const binary = atob(base64);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        array[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([array], { type: mimeType });
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.error("[TrackGenerator] Failed to create Blob from Base64:", e);
+      throw new Error("Failed to process Lyria audio data. The response may be corrupted.");
+    }
   }
 
   async generateSoundEffect(type) {

@@ -19,41 +19,54 @@ export class AdaptiveMusicEngine {
     if (this.isInitialized) return;
     await Tone.start();
 
-    // Hit sound effect poly synth (the "Ding")
-    this.sfxSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "triangle8" },
+    // High-impact Dribble SFX (The "Satisfying Ding")
+    this.sfxSynth = new Tone.MetalSynth({
+      harmonicity: 10,
+      resonance: 50,
+      modulationIndex: 32,
       envelope: {
-        attack: 0.005,
-        decay: 0.2,
-        sustain: 0,
-        release: 0.1
-      }
+        attack: 0.001,
+        decay: 0.1,
+        release: 0.05
+      },
+      volume: -6
     }).toDestination();
-    this.sfxSynth.volume.value = -3;
-
-    Tone.Transport.start();
 
     this.isInitialized = true;
-    console.log("Tone.js initialized (No fallbacks allowed)");
+    console.log("AdaptiveMusicEngine: Crystalline SFX ready.");
   }
 
   playHitSFX(rating) {
     if (!this.isInitialized || rating === 'miss') return;
-    if (rating === 'perfect') this.sfxSynth.triggerAttackRelease("C5", "16n");
-    else if (rating === 'great') this.sfxSynth.triggerAttackRelease("A4", "16n");
-    else if (rating === 'good') this.sfxSynth.triggerAttackRelease("F4", "16n");
+    
+    // Satisfying "Metal Hit" pitch variations based on accuracy
+    let freq = "C6";
+    if (rating === 'great') freq = "A5";
+    else if (rating === 'good') freq = "E5";
+    
+    this.sfxSynth.triggerAttackRelease(freq, "16n");
   }
 
   // Load a generated track buffer and assign it a base BPM
   async loadTrack(bpm, urlOrBuffer) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Audio track loading timed out (15s). The generated buffer may be invalid."));
+      }, 15000);
+
       const player = new Tone.Player({
         url: urlOrBuffer,
         loop: true,
         autostart: false,
         onload: () => {
+          clearTimeout(timeout);
           this.tracks.set(bpm, player);
           resolve();
+        },
+        onerror: (err) => {
+          clearTimeout(timeout);
+          console.error("Tone.Player failed to load buffer:", err);
+          reject(new Error(`Failed to decode audio track: ${err}`));
         }
       });
     });
@@ -109,38 +122,32 @@ export class AdaptiveMusicEngine {
     return nearest;
   }
 
-  // Called by rhythm engine when user BPM changes
+  // Called by rhythm engine when user BPM changes.
+  // Only adjusts playbackRate — never restarts the track.
   updateTempo(userBPM) {
     if (!this.currentSource) return;
     this.targetBPM = userBPM;
-    
-    const currentRate = this.currentSource.playbackRate;
-    const effectiveBPM = this.currentBPM * currentRate;
-    const diff = Math.abs(effectiveBPM - userBPM);
-    
-    if (diff < 3) return;  // close enough, don't adjust
-    
-    Tone.Transport.bpm.rampTo(userBPM, 1);
-    
-    // Can we handle it with playbackRate alone?
+
     const nearest = this.findNearestTrack(userBPM);
-    if (!nearest) {
-      this.currentBPM = userBPM;
-      return;
-    }
+    if (!nearest) return;
 
     const neededRate = userBPM / nearest.baseBPM;
-    
-    if (neededRate > 0.85 && neededRate < 1.15) {
-      // Yes — just adjust playbackRate (smooth, no audible artifacts)
-      // Note: Tone.js doesn't natively ramp playbackRate easily on Player,
-      // but we can set it directly.
-      this.currentSource.playbackRate = neededRate;
-      this.currentBPM = nearest.baseBPM; // Update base reference
-    } else {
-      // Need to switch to a different base track
-      this.playTrack(userBPM);
-    }
+    // Clamp rate to avoid extreme pitch shifts, but never restart
+    const clampedRate = Math.max(0.8, Math.min(1.2, neededRate));
+
+    const currentRate = this.currentSource.playbackRate;
+    if (Math.abs(clampedRate - currentRate) < 0.02) return; // close enough
+
+    this.currentSource.playbackRate = clampedRate;
+    Tone.Transport.bpm.rampTo(userBPM, 1);
+  }
+
+  getAudioTime() {
+    return Tone.Transport.seconds;
+  }
+
+  getBPM() {
+    return Tone.Transport.bpm.value;
   }
 
   stopAll() {
@@ -148,6 +155,8 @@ export class AdaptiveMusicEngine {
       this.currentSource.volume.rampTo(-60, 2);
       setTimeout(() => {
         this.tracks.forEach(player => player.stop());
+        Tone.Transport.stop();
+        Tone.Transport.cancel();
       }, 2000);
     }
   }
