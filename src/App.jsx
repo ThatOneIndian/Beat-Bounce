@@ -25,7 +25,7 @@ let staticEngines = {
   musicEngine: new AdaptiveMusicEngine()
 };
 staticEngines.beatScorer = new BeatScorer(staticEngines.beatGrid);
-staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
+staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
 staticEngines.geminiLive = new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
 
 function App() {
@@ -73,6 +73,12 @@ function App() {
       };
     }
   });
+
+  const handleQuit = () => {
+    staticEngines.musicEngine.stopAll();
+    setAppState('config');
+    setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy });
+  };
 
   const handleStart = async (newConfig) => {
     setConfig(newConfig);
@@ -217,7 +223,18 @@ function App() {
       )}
 
       {appState === 'active' && (
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', padding: '2rem', paddingTop: '8rem' }}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', padding: '2rem', paddingTop: '8rem' }}>
+          <button 
+            onClick={handleQuit}
+            className="glass-panel"
+            style={{ 
+              position: 'fixed', top: '2rem', left: '2rem', padding: '0.8rem 1.5rem', 
+              color: '#ff4444', border: '1px solid rgba(255, 68, 68, 0.3)', 
+              cursor: 'pointer', fontWeight: 600, zIndex: 100 
+            }}
+          >
+            QUIT SESSION
+          </button>
           <HUD {...stats} />
           <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
           <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '16px', border: '1px solid var(--panel-border)' }}></canvas>
