@@ -41,11 +41,20 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy }) {
       {rating && (
         <div style={{ 
           position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', 
-          fontSize: '4rem', fontWeight: 900, textTransform: 'uppercase', opacity: 0.8,
+          fontSize: '4.5rem', fontWeight: 900, textTransform: 'uppercase', 
           color: rating === 'perfect' ? '#FFD700' : rating === 'great' ? '#00BFFF' : rating === 'good' ? '#00FF00' : '#FF0000',
-          textShadow: '0px 0px 20px rgba(0,0,0,0.5)', pointerEvents: 'none', zIndex: 20
+          textShadow: '0px 0px 30px rgba(0,0,0,0.6)', pointerEvents: 'none', zIndex: 20,
+          animation: 'splashPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards'
         }}>
-          {rating}!
+          <div style={{ fontSize: '1.5rem', opacity: 0.8, textAlign: 'center' }}>DRIBBLE DETECTED</div>
+          <div style={{ textAlign: 'center' }}>{rating}!</div>
+          <style>{`
+            @keyframes splashPop {
+              0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+              50% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+              100% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+            }
+          `}</style>
         </div>
       )}
     </div>

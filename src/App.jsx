@@ -15,19 +15,6 @@ import { TrackGenerator } from './music/TrackGenerator';
 import { GeminiLiveClassifier } from './ai/GeminiLiveClassifier';
 import './index.css';
 
-// Keep instances outside React state to avoid re-renders disrupting the tight loop
-let staticEngines = {
-  poseTracker: new PoseTracker(),
-  dribbleDetector: new DribbleDetector(),
-  audioDetector: new AudioDribbleDetector(),
-  rhythmEngine: new RhythmEngine(),
-  beatGrid: new BeatGrid(),
-  musicEngine: new AdaptiveMusicEngine()
-};
-staticEngines.beatScorer = new BeatScorer(staticEngines.beatGrid);
-staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
-staticEngines.geminiLive = new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
-
 function App() {
   const [appState, setAppState] = useState('config'); // config, generating, countdown, active, error
   const [config, setConfig] = useState({
@@ -47,6 +34,30 @@ function App() {
   const canvasRef = useRef(null);
   const reqRef = useRef(null);
 
+  // High-performance singletons initialized only when needed
+  const enginesRef = useRef(null);
+
+  const initializeEngines = async () => {
+    if (enginesRef.current) return;
+    
+    // Lazy-load tracking models only once
+    const poseTracker = new PoseTracker();
+    const dribbleDetector = new DribbleDetector();
+    const audioDetector = new AudioDribbleDetector();
+    const rhythmEngine = new RhythmEngine();
+    const beatGrid = new BeatGrid();
+    const musicEngine = new AdaptiveMusicEngine();
+    
+    enginesRef.current = {
+      poseTracker, dribbleDetector, audioDetector, rhythmEngine, beatGrid, musicEngine,
+      beatScorer: new BeatScorer(beatGrid),
+      trackGen: new TrackGenerator(),
+      geminiLive: new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY)
+    };
+
+    console.log("Engines categorized and ready.");
+  };
+
   // Setup webcam preview early
   useEffect(() => {
     async function setupCamera() {
@@ -56,7 +67,6 @@ function App() {
           audio: true 
         });
         setMediaStream(stream);
-        staticEngines.audioDetector.init(stream);
       } catch (err) {
         console.error("Failed to access camera/mic:", err);
       }
@@ -69,13 +79,14 @@ function App() {
     if (videoRef.current && mediaStream && videoRef.current.srcObject !== mediaStream) {
       videoRef.current.srcObject = mediaStream;
       videoRef.current.onloadedmetadata = () => {
-        videoRef.current.play().catch(e => console.warn("Video autplay blocked", e));
+        videoRef.current.play().catch(e => console.warn("Video autoplay blocked", e));
       };
     }
   });
 
   const handleQuit = () => {
-    staticEngines.musicEngine.stopAll();
+    const engines = enginesRef.current;
+    if (engines) engines.musicEngine.stopAll();
     setAppState('config');
     setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy });
   };
@@ -84,16 +95,26 @@ function App() {
     setConfig(newConfig);
     setAppState('generating');
     
-    await staticEngines.poseTracker.initialize();
-    await staticEngines.musicEngine.initialize();
-    await staticEngines.geminiLive.connect();
-    
+    await initializeEngines();
+    const engines = enginesRef.current;
+
     const targetBPM = Math.round((newConfig.tempo_range.min + newConfig.tempo_range.max) / 2);
-    
+
     try {
-      const trackUrl = await staticEngines.trackGen.generateTrack(targetBPM, newConfig);
-      await staticEngines.musicEngine.loadTrack(targetBPM, trackUrl);
-      staticEngines.musicEngine.playTrack(targetBPM);
+      await engines.poseTracker.initialize();
+      await engines.musicEngine.initialize();
+      await engines.geminiLive.connect();
+      
+      engines.audioDetector.init(mediaStream);
+      
+      if (!newConfig.testMode) {
+        const trackUrl = await engines.trackGen.generateTrack(targetBPM, newConfig);
+        await engines.musicEngine.loadTrack(targetBPM, trackUrl);
+        engines.musicEngine.playTrack(targetBPM);
+      } else {
+        console.log("[Test Mode] Bypassing music generation.");
+      }
+      
       setAppState('countdown');
     } catch (err) {
       console.error(err);
@@ -114,45 +135,50 @@ function App() {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       const video = videoRef.current;
+      const engines = enginesRef.current;
       
-      if (!canvas || !ctx || !video) return;
+      if (!canvas || !ctx || !video || !engines) return;
 
       const skeletonRenderer = new SkeletonRenderer(canvas);
-      const beatIndicator = new BeatIndicator(canvas, staticEngines.beatGrid);
+      const beatIndicator = new BeatIndicator(canvas, engines.beatGrid);
 
       const targetBPM = Math.round((config.tempo_range.min + config.tempo_range.max) / 2);
-      staticEngines.beatGrid.initialize(targetBPM, performance.now());
+      engines.beatGrid.initialize(targetBPM, performance.now());
       setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
 
       let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy };
 
       const renderLoop = (timestamp) => {
-        // Only attempt to draw or parse if the video element has loaded frames
-        if (video.readyState >= 2) { // HAVE_CURRENT_DATA or higher
-          // Draw video background
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.save();
-          ctx.scale(-1, 1);
-          ctx.translate(-canvas.width, 0);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
+        try {
+          if (video.readyState >= 2) { 
+            // 1. Clear & Background
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-canvas.width, 0);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
 
-          // Tracker processing
-          const landmarks = staticEngines.poseTracker.processFrame(video, timestamp);
-          if (landmarks) {
-            const visEvent = staticEngines.dribbleDetector.processFrame(landmarks, timestamp);
-            const audEvent = staticEngines.audioDetector.detect(timestamp);
+            // 2. Tracking: Pose
+            const landmarks = engines.poseTracker.processFrame(video, timestamp);
             
+            // 3. Fusion Logic
+            let visEvent = { detected: false, timestamp };
+            if (landmarks) {
+              visEvent = engines.dribbleDetector.processFrame(landmarks, timestamp);
+            }
+            
+            const audEvent = engines.audioDetector.detect(timestamp);
             const fused = SensorFusion.fuseDribbleSignals(visEvent, audEvent);
             
             if (fused.detected) {
-              const rhythm = staticEngines.rhythmEngine.onDribble(fused.timestamp);
-              const scoreResult = staticEngines.beatScorer.scoreDribble(fused.timestamp);
+              const rhythm = engines.rhythmEngine.onDribble(fused.timestamp);
+              const scoreResult = engines.beatScorer.scoreDribble(fused.timestamp);
               
               skeletonRenderer.setScoreColor(scoreResult.rating);
-              staticEngines.musicEngine.playHitSFX(scoreResult.rating);
+              engines.musicEngine.playHitSFX(scoreResult.rating);
               beatIndicator.addSplash(scoreResult.rating);
-              if (rhythm) staticEngines.musicEngine.updateTempo(Math.round(rhythm.bpm));
+              if (rhythm) engines.musicEngine.updateTempo(Math.round(rhythm.bpm));
               
               currentStats = {
                  score: scoreResult.totalScore,
@@ -163,33 +189,29 @@ function App() {
                  energy: config.energy
               };
               
-              // Push update to React
               setStats({...currentStats});
               
               setTimeout(() => {
                 setStats(s => s.rating === scoreResult.rating ? {...s, rating: null} : s);
               }, 500);
             }
-            skeletonRenderer.render(landmarks);
-            
-            // Stream compressed frame to Gemini once per second
-            staticEngines.geminiLive.maybeSendFrame(canvas, timestamp);
-          } else {
-             // In case landmarks are temporarily lost, clear the old skeleton but keep drawing background
-             skeletonRenderer.render([]);
+
+            // 4. Rendering
+            if (landmarks) {
+              skeletonRenderer.render(landmarks);
+              engines.geminiLive.maybeSendFrame(canvas, timestamp);
+            }
           }
+        } catch (err) {
+          console.error("Render catch loop error:", err);
         }
 
-        // Draw Beat highway
         beatIndicator.render(performance.now());
         reqRef.current = requestAnimationFrame(renderLoop);
       };
 
       reqRef.current = requestAnimationFrame(renderLoop);
-
-      return () => {
-        cancelAnimationFrame(reqRef.current);
-      };
+      return () => cancelAnimationFrame(reqRef.current);
     }
   }, [appState, config]);
 

@@ -6,40 +6,37 @@ export class SensorFusion {
    * @param {number} toleranceMs Tolerance for timestamp difference
    * @returns {Object} Fused event
    */
-  static fuseDribbleSignals(visualEvent, audioEvent, toleranceMs = 80) {
-    // Case 1: Both signals agree within tolerance → high confidence dribble
+  static fuseDribbleSignals(visualEvent, audioEvent) {
+    // Both signals agree (High confidence)
     if (visualEvent.detected && audioEvent.detected) {
-      const timeDiff = Math.abs(visualEvent.timestamp - audioEvent.timestamp);
-      if (timeDiff < toleranceMs) {
-        return { 
-          detected: true, 
-          confidence: 0.95,
-          timestamp: (visualEvent.timestamp + audioEvent.timestamp) / 2,
-          source: 'fused'
-        };
-      }
+      return {
+        detected: true,
+        confidence: 0.95,
+        timestamp: Math.min(visualEvent.timestamp, audioEvent.timestamp),
+        source: 'fused'
+      };
     }
-    
-    // Case 2: Only visual → medium confidence
+
+    // Visual only (Flick detected)
     if (visualEvent.detected) {
-      return { 
-        detected: true, 
+      return {
+        detected: true,
         confidence: 0.7,
         timestamp: visualEvent.timestamp,
         source: 'visual'
       };
     }
-    
-    // Case 3: Only audio → lower confidence (could be footstep, etc.)
+
+    // Audio only (Impact heard)
     if (audioEvent.detected) {
-      return { 
-        detected: true, 
-        confidence: 0.4,
+      return {
+        detected: true,
+        confidence: 0.5,
         timestamp: audioEvent.timestamp,
         source: 'audio'
       };
     }
-    
-    return { detected: false };
+
+    return { detected: false, confidence: 0 };
   }
 }

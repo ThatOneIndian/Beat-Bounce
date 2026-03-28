@@ -1,5 +1,6 @@
 export class TrackGenerator {
-  constructor(apiKey) {
+  constructor() {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY;
     this.apiKey = apiKey;
     // Hitting the newly announced Lyria preview model
     this.lyriaEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/lyria-3-pro-preview:generateContent?key=${apiKey}`;

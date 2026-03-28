@@ -19,9 +19,17 @@ export class AdaptiveMusicEngine {
     if (this.isInitialized) return;
     await Tone.start();
 
-    // Hit sound effect poly synth
-    this.sfxSynth = new Tone.PolySynth(Tone.Synth).toDestination();
-    this.sfxSynth.volume.value = -5;
+    // Hit sound effect poly synth (the "Ding")
+    this.sfxSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: "triangle8" },
+      envelope: {
+        attack: 0.005,
+        decay: 0.2,
+        sustain: 0,
+        release: 0.1
+      }
+    }).toDestination();
+    this.sfxSynth.volume.value = -3;
 
     Tone.Transport.start();
 

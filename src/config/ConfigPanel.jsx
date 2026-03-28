@@ -157,13 +157,22 @@ function ConfigPanel({ initialConfig, onStart, mediaStream }) {
           </div>
         </div>
 
-        <div style={{ marginTop: 'auto', paddingTop: '1rem' }}>
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', display: 'flex', gap: '1rem' }}>
           <button 
             className="btn-primary" 
-            style={{ width: '100%', height: '56px', fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
-            onClick={() => onStart(config)}
+            style={{ flex: 1, height: '56px', fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
+            onClick={() => onStart({ ...config, testMode: false })}
           >
             <span style={{ fontSize: '1.5rem' }}>🏀</span> Generate & Start
+          </button>
+          
+          <button 
+            className="glass-panel" 
+            style={{ width: '80px', height: '56px', fontSize: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(255,255,255,0.2)' }}
+            onClick={() => onStart({ ...config, testMode: true })}
+            title="Test Video & Tracking Only"
+          >
+            📹
           </button>
         </div>
       </div>

@@ -101,7 +101,5 @@ export class SkeletonRenderer {
     drawWrist(landmarks[15]);
     drawWrist(landmarks[16]);
     
-    // Reset shadow
-    ctx.shadowBlur = 0;
   }
 }
