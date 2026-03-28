@@ -139,6 +139,35 @@ function ConfigPanel({ initialConfig, onStart, mediaStream }) {
           </div>
         </div>
 
+        {/* Duration */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>DURATION</label>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+              {config.duration_seconds >= 60
+                ? `${Math.floor(config.duration_seconds / 60)}m ${config.duration_seconds % 60 ? config.duration_seconds % 60 + 's' : ''}`
+                : `${config.duration_seconds}s`}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {[30, 60, 90, 120, 180].map(s => (
+              <button
+                key={s}
+                onClick={() => updateConfig('duration_seconds', s)}
+                style={{
+                  background: config.duration_seconds === s ? 'var(--accent-color)' : 'transparent',
+                  color: config.duration_seconds === s ? '#000' : '#fff',
+                  border: `1px solid ${config.duration_seconds === s ? 'var(--accent-color)' : 'var(--panel-border)'}`,
+                  padding: '6px 16px', borderRadius: '20px', cursor: 'pointer', fontWeight: 600,
+                  transition: 'all 0.2s'
+                }}
+              >
+                {s >= 60 ? `${s / 60}m` : `${s}s`}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Instruments */}
         <div>
           <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontWeight: 600 }}>INSTRUMENT FOCUS</label>

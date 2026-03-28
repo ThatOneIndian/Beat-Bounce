@@ -9,51 +9,39 @@ export class TrackGenerator {
   buildLyriaPrompt(config, targetBPM) {
     const genreProfiles = {
       'hip-hop': {
-        style: "Modern hard-hitting Hip-Hop",
-        drums: "Crisp 808 kicks, sharp claps, and busy hi-hat patterns",
-        texture: "Deep sub-bass, soul-sampled vocal chops, and cinematic strings",
-        energy_focus: "Heavy groove, head-nodding bounce"
+        style: "modern hard-hitting hip-hop",
+        drums: "crisp 808 kicks, sharp claps, and busy hi-hat patterns",
+        texture: "deep sub-bass, soul-sampled vocal chops, and cinematic strings",
+        energy_focus: "heavy groove, head-nodding bounce"
       },
       'edm': {
-        style: "High-energy Pulsing Dance music",
-        drums: "Heavy four-on-the-floor kick, bright white-noise snare, and side-chained pads",
-        texture: "Acid synth leads, rhythmic arpeggios, and build-up swells",
-        energy_focus: "Maximum drive, stadium energy"
+        style: "high-energy pulsing electronic dance music",
+        drums: "heavy four-on-the-floor kick, bright snare, and side-chained pads",
+        texture: "acid synth leads, rhythmic arpeggios, and build-up swells",
+        energy_focus: "maximum drive, stadium energy"
       },
       'lo-fi': {
-        style: "Chill Bit-crushed Lo-Fi Beats",
-        drums: "Lazy dusty drum breaks, muffled kicks, and shakers",
-        texture: "Vinyl crackle, warm rhodes piano, and detuned jazz guitar",
-        energy_focus: "Relaxed atmosphere, focus-oriented"
+        style: "chill lo-fi beats",
+        drums: "lazy dusty drum breaks, muffled kicks, and shakers",
+        texture: "vinyl crackle, warm rhodes piano, and detuned jazz guitar",
+        energy_focus: "relaxed atmosphere, focus-oriented"
       },
       'pop': {
-        style: "Bright Chart-topping Pop Instrumental",
-        drums: "Clean punchy electronic drums, layered handclaps",
-        texture: "Shimmering synth plucks, funky bass guitar, and catchy melodic hooks",
-        energy_focus: "Upbeat, melodic, and polished"
+        style: "bright chart-topping pop instrumental",
+        drums: "clean punchy electronic drums, layered handclaps",
+        texture: "shimmering synth plucks, funky bass guitar, and catchy melodic hooks",
+        energy_focus: "upbeat, melodic, and polished"
       }
     };
 
     const profile = genreProfiles[config.genre.toLowerCase()] || genreProfiles['hip-hop'];
-    
-    const promptObject = {
-      instruction: "Generate a professional high-fidelity loopable instrumental track",
-      tempo_bpm: Math.round(targetBPM),
-      genre_specification: {
-        primary_style: profile.style,
-        drum_profile: profile.drums,
-        sonic_texture: profile.texture,
-        mood: config.mood
-      },
-      compositional_rules: [
-        "Maintain strict rhythmic consistency for physical activity synchronization",
-        `Reflect energy level ${config.energy}/10: ${profile.energy_focus}`,
-        "Ensure clear transient attacks for dribble impact processing",
-        `Incorporate these specific instruments: ${config.instruments.join(', ')}`
-      ]
-    };
+    const instruments = config.instruments.join(', ');
 
-    return JSON.stringify(promptObject, null, 2);
+    return `Generate a ${profile.style} instrumental track at ${Math.round(targetBPM)} BPM. ` +
+      `Drums: ${profile.drums}. Texture: ${profile.texture}. ` +
+      `Mood: ${config.mood}, energy level ${config.energy} out of 10, ${profile.energy_focus}. ` +
+      `Feature these instruments: ${instruments}. ` +
+      `Keep strict rhythmic consistency with clear transient attacks. Make it loopable.`;
   }
 
   async generateTrack(bpm, config) {
@@ -74,11 +62,7 @@ export class TrackGenerator {
           parts: [{ text: prompt }]
         }],
         generationConfig: {
-          responseModalities: ["AUDIO", "TEXT"],
-          temperature: 1.0,
-          topP: 0.95,
-          topK: 40,
-          maxOutputTokens: 2048
+          responseModalities: ["AUDIO"]
         }
       };
 

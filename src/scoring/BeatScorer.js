@@ -16,15 +16,15 @@ export class BeatScorer {
 
     let result;
 
-    if (absOffset <= 50) {
+    if (absOffset <= 80) {
       result = { rating: 'perfect', basePoints: 100 };
       this.combo++;
       this.hitCounts.perfect++;
-    } else if (absOffset <= 100) {
+    } else if (absOffset <= 150) {
       result = { rating: 'great', basePoints: 75 };
       this.combo++;
       this.hitCounts.great++;
-    } else if (absOffset <= 150) {
+    } else if (absOffset <= 250) {
       result = { rating: 'good', basePoints: 50 };
       this.combo++;
       this.hitCounts.good++;
@@ -54,6 +54,15 @@ export class BeatScorer {
       multiplier: this.multiplier,
       totalScore: this.totalScore
     };
+  }
+
+  reset() {
+    this.totalScore = 0;
+    this.combo = 0;
+    this.maxCombo = 0;
+    this.multiplier = 1;
+    this.hitCounts = { perfect: 0, great: 0, good: 0, miss: 0 };
+    this.totalDribbles = 0;
   }
 
   getStats() {

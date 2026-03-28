@@ -17,7 +17,7 @@ import * as Tone from 'tone';
 import './index.css';
 
 function App() {
-  const [appState, setAppState] = useState('config'); // config, generating, countdown, active, error
+  const [appState, setAppState] = useState('config'); // config, generating, countdown, active, results, error
   const [config, setConfig] = useState({
     genre: 'hip-hop',
     energy: 7,
@@ -31,6 +31,8 @@ function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [genStatus, setGenStatus] = useState("Initializing...");
   const [mediaStream, setMediaStream] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [finalResults, setFinalResults] = useState(null);
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -40,6 +42,8 @@ function App() {
   // High-performance singletons initialized only when needed
   const enginesRef = useRef(null);
   const feedbackManagerRef = useRef(null);
+  const gameTimerRef = useRef(null);
+  const gameStartTimeRef = useRef(null);
 
   const initializeEngines = async () => {
     if (enginesRef.current) return;
@@ -98,9 +102,43 @@ function App() {
       feedbackManagerRef.current.destroy();
       feedbackManagerRef.current = null;
     }
+    if (gameTimerRef.current) {
+      clearInterval(gameTimerRef.current);
+      gameTimerRef.current = null;
+    }
     setAppState('config');
     setGenStatus("Initializing...");
+    setFinalResults(null);
     setStats({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: config.energy });
+  };
+
+  const handleGameOver = () => {
+    const engines = enginesRef.current;
+    if (!engines) return;
+
+    const scorerStats = engines.beatScorer.getStats();
+    const accuracy = parseFloat(scorerStats.accuracy) || 0;
+
+    let grade, gradeColor;
+    if (accuracy >= 90 && scorerStats.maxCombo >= 20) { grade = 'S'; gradeColor = '#FFD700'; }
+    else if (accuracy >= 80) { grade = 'A'; gradeColor = '#00FFCC'; }
+    else if (accuracy >= 65) { grade = 'B'; gradeColor = '#00BFFF'; }
+    else if (accuracy >= 50) { grade = 'C'; gradeColor = '#FFA500'; }
+    else if (accuracy >= 30) { grade = 'D'; gradeColor = '#FF6347'; }
+    else { grade = 'F'; gradeColor = '#FF4444'; }
+
+    setFinalResults({ ...scorerStats, grade, gradeColor, duration: config.duration_seconds });
+
+    engines.musicEngine.stopAll();
+    if (feedbackManagerRef.current) {
+      feedbackManagerRef.current.destroy();
+      feedbackManagerRef.current = null;
+    }
+    if (gameTimerRef.current) {
+      clearInterval(gameTimerRef.current);
+      gameTimerRef.current = null;
+    }
+    setAppState('results');
   };
 
   const handleStart = async (newConfig) => {
@@ -127,6 +165,7 @@ function App() {
       setGenStatus("Connecting to Gemini Live...");
       await engines.geminiLive.connect();
       
+      engines.beatScorer.reset();
       engines.audioDetector.init(mediaStream);
       
       if (!newConfig.testMode) {
@@ -181,6 +220,22 @@ function App() {
       // Start the feedback systems — pass the gainNode so HarmonyEngine can
       // insert its filter in the chain without disconnecting the player
       feedbackManager.startTrack(targetBPM, engines.musicEngine.gainNode);
+
+      // Game timer
+      const durationMs = config.duration_seconds * 1000;
+      gameStartTimeRef.current = performance.now();
+      setTimeLeft(config.duration_seconds);
+
+      gameTimerRef.current = setInterval(() => {
+        const elapsed = performance.now() - gameStartTimeRef.current;
+        const remaining = Math.max(0, Math.ceil((durationMs - elapsed) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(gameTimerRef.current);
+          gameTimerRef.current = null;
+          handleGameOver();
+        }
+      }, 250);
 
       const renderLoop = (timestamp) => {
         try {
@@ -258,6 +313,10 @@ function App() {
       reqRef.current = requestAnimationFrame(renderLoop);
       return () => {
         cancelAnimationFrame(reqRef.current);
+        if (gameTimerRef.current) {
+          clearInterval(gameTimerRef.current);
+          gameTimerRef.current = null;
+        }
         if (feedbackManagerRef.current) {
           feedbackManagerRef.current.destroy();
           feedbackManagerRef.current = null;
@@ -295,23 +354,114 @@ function App() {
         </div>
       )}
 
+      {appState === 'results' && finalResults && (
+        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', textAlign: 'center', padding: '3rem' }}>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.1em', marginBottom: '0.5rem' }}>SESSION COMPLETE</p>
+
+            {/* Grade */}
+            <div style={{
+              fontSize: '7rem', fontWeight: 800, lineHeight: 1,
+              color: finalResults.gradeColor,
+              textShadow: `0 0 40px ${finalResults.gradeColor}60`,
+              margin: '0.5rem 0 1.5rem'
+            }}>
+              {finalResults.grade}
+            </div>
+
+            {/* Score */}
+            <div style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '2rem' }}>
+              {finalResults.totalScore.toLocaleString()}
+              <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>pts</span>
+            </div>
+
+            {/* Stats grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem', textAlign: 'left' }}>
+              <div className="glass-panel" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>ACCURACY</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{finalResults.accuracy}%</div>
+              </div>
+              <div className="glass-panel" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>MAX COMBO</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{finalResults.maxCombo}x</div>
+              </div>
+              <div className="glass-panel" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>TOTAL DRIBBLES</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{finalResults.totalDribbles}</div>
+              </div>
+              <div className="glass-panel" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>DURATION</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>
+                  {finalResults.duration >= 60 ? `${Math.floor(finalResults.duration / 60)}m ${finalResults.duration % 60}s` : `${finalResults.duration}s`}
+                </div>
+              </div>
+            </div>
+
+            {/* Hit breakdown */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', marginBottom: '2rem', fontSize: '0.85rem' }}>
+              <span><span style={{ color: '#FFD700', fontWeight: 700 }}>{finalResults.hitCounts.perfect}</span> Perfect</span>
+              <span><span style={{ color: '#00BFFF', fontWeight: 700 }}>{finalResults.hitCounts.great}</span> Great</span>
+              <span><span style={{ color: '#00FF00', fontWeight: 700 }}>{finalResults.hitCounts.good}</span> Good</span>
+              <span><span style={{ color: '#FF4444', fontWeight: 700 }}>{finalResults.hitCounts.miss}</span> Miss</span>
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button
+                className="btn-primary"
+                style={{ flex: 1, height: '52px', fontSize: '1.1rem' }}
+                onClick={() => { setFinalResults(null); handleStart({ ...config, testMode: false }); }}
+              >
+                Play Again
+              </button>
+              <button
+                className="glass-panel"
+                style={{ flex: 1, height: '52px', fontSize: '1.1rem', cursor: 'pointer', fontWeight: 600, border: '1px solid var(--panel-border)' }}
+                onClick={handleQuit}
+              >
+                Change Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {appState === 'active' && (
-        <div 
+        <div
           ref={feedbackContainerRef}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', padding: '2rem', paddingTop: '4rem' }}
         >
-          <button 
+          <button
             onClick={handleQuit}
             className="glass-panel"
-            style={{ 
-              position: 'fixed', top: '2rem', left: '2rem', padding: '0.8rem 1.5rem', 
-              color: '#ff4444', border: '1px solid rgba(255, 68, 68, 0.3)', 
-              cursor: 'pointer', fontWeight: 600, zIndex: 100 
+            style={{
+              position: 'fixed', top: '2rem', left: '2rem', padding: '0.8rem 1.5rem',
+              color: '#ff4444', border: '1px solid rgba(255, 68, 68, 0.3)',
+              cursor: 'pointer', fontWeight: 600, zIndex: 100
             }}
           >
             QUIT SESSION
           </button>
-          
+
+          {/* Timer */}
+          <div style={{
+            position: 'fixed', top: '2rem', left: '50%', transform: 'translateX(-50%)',
+            zIndex: 100, textAlign: 'center'
+          }}>
+            <div className="glass-panel" style={{
+              padding: '0.5rem 1.5rem', display: 'inline-block',
+              border: timeLeft <= 10 ? '1px solid rgba(255, 68, 68, 0.5)' : '1px solid var(--panel-border)'
+            }}>
+              <span style={{
+                fontSize: '1.8rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                color: timeLeft <= 10 ? '#ff4444' : timeLeft <= 30 ? '#FFA500' : '#fff',
+                textShadow: timeLeft <= 10 ? '0 0 12px rgba(255,68,68,0.6)' : 'none'
+              }}>
+                {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+              </span>
+            </div>
+          </div>
+
           <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }}></video>
           <canvas 
             ref={canvasRef} 
