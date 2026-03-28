@@ -4,6 +4,8 @@ export class PoseTracker {
   constructor() {
     this.poseLandmarker = null;
     this.isInitialized = false;
+    this.prevLandmarks = null;
+    this.smoothingFactor = 0.45; // 0 = no smoothing, 1 = static (EMA alpha)
   }
 
   async initialize() {
@@ -21,13 +23,13 @@ export class PoseTracker {
       },
       runningMode: "VIDEO",
       numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.8 // High confidence to stick to one person
+      minPoseDetectionConfidence: 0.4, // Faster initial lock
+      minPosePresenceConfidence: 0.4,  // More resilient to occlusion
+      minTrackingConfidence: 0.6      // Stable tracking with less jitter
     });
 
     this.isInitialized = true;
-    console.log("PoseLandmarker initialized.");
+    console.log("PoseLandmarker (Heavy) initialized with smoothing.");
   }
 
   /**
@@ -45,10 +47,28 @@ export class PoseTracker {
     try {
       const results = this.poseLandmarker.detectForVideo(videoElement, timestamp);
       if (results.landmarks && results.landmarks.length > 0) {
-        return results.landmarks[0]; // We only track one person
+        const rawLandmarks = results.landmarks[0];
+        
+        // Apply EMA smoothing to every joint
+        if (this.prevLandmarks) {
+          const smoothed = rawLandmarks.map((point, i) => {
+            const prev = this.prevLandmarks[i];
+            return {
+              x: prev.x * this.smoothingFactor + point.x * (1 - this.smoothingFactor),
+              y: prev.y * this.smoothingFactor + point.y * (1 - this.smoothingFactor),
+              z: prev.z * this.smoothingFactor + point.z * (1 - this.smoothingFactor),
+              visibility: point.visibility
+            };
+          });
+          this.prevLandmarks = smoothed;
+          return smoothed;
+        } else {
+          this.prevLandmarks = rawLandmarks;
+          return rawLandmarks;
+        }
       }
     } catch (err) {
-      console.error("Error in PoseLandmarker detection limit/throughput:", err);
+      console.error("Error in PoseLandmarker detection:", err);
     }
     
     return null;

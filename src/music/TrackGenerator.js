@@ -6,15 +6,53 @@ export class TrackGenerator {
   }
 
   buildLyriaPrompt(config, targetBPM) {
-    const parts = [];
-    parts.push('Generate original ambient audio');
-    parts.push('soft warm pad textures and gentle environmental sounds');
-    parts.push('no melody, no drums, no vocals, no rhythm');
-    parts.push('smooth background atmosphere');
-    parts.push(`${config.mood} feeling`);
-    parts.push(`slow evolving texture around ${Math.round(targetBPM)} BPM`);
-    parts.push('original composition, unique sound design');
-    return parts.join(', ');
+    const genreProfiles = {
+      'hip-hop': {
+        style: "Modern hard-hitting Hip-Hop",
+        drums: "Crisp 808 kicks, sharp claps, and busy hi-hat patterns",
+        texture: "Deep sub-bass, soul-sampled vocal chops, and cinematic strings",
+        energy_focus: "Heavy groove, head-nodding bounce"
+      },
+      'edm': {
+        style: "High-energy Pulsing Dance music",
+        drums: "Heavy four-on-the-floor kick, bright white-noise snare, and side-chained pads",
+        texture: "Acid synth leads, rhythmic arpeggios, and build-up swells",
+        energy_focus: "Maximum drive, stadium energy"
+      },
+      'lo-fi': {
+        style: "Chill Bit-crushed Lo-Fi Beats",
+        drums: "Lazy dusty drum breaks, muffled kicks, and shakers",
+        texture: "Vinyl crackle, warm rhodes piano, and detuned jazz guitar",
+        energy_focus: "Relaxed atmosphere, focus-oriented"
+      },
+      'pop': {
+        style: "Bright Chart-topping Pop Instrumental",
+        drums: "Clean punchy electronic drums, layered handclaps",
+        texture: "Shimmering synth plucks, funky bass guitar, and catchy melodic hooks",
+        energy_focus: "Upbeat, melodic, and polished"
+      }
+    };
+
+    const profile = genreProfiles[config.genre.toLowerCase()] || genreProfiles['hip-hop'];
+
+    const promptObject = {
+      instruction: "Generate a professional high-fidelity loopable instrumental track",
+      tempo_bpm: Math.round(targetBPM),
+      genre_specification: {
+        primary_style: profile.style,
+        drum_profile: profile.drums,
+        sonic_texture: profile.texture,
+        mood: config.mood
+      },
+      compositional_rules: [
+        "Maintain strict rhythmic consistency for physical activity synchronization",
+        `Reflect energy level ${config.energy}/10: ${profile.energy_focus}`,
+        "Ensure clear transient attacks for dribble impact processing",
+        `Incorporate these specific instruments: ${config.instruments.join(', ')}`
+      ]
+    };
+
+    return JSON.stringify(promptObject, null, 2);
   }
 
   async generateTrack(bpm, config) {
@@ -30,7 +68,10 @@ export class TrackGenerator {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ 
+            role: "user", 
+            parts: [{ text: prompt }] 
+          }],
           generationConfig: {
               responseModalities: ["AUDIO", "TEXT"]
           }
