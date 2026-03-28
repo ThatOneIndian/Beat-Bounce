@@ -7,21 +7,13 @@ export class TrackGenerator {
 
   buildLyriaPrompt(config, targetBPM) {
     const parts = [];
-    parts.push(`Generate audio: ${config.genre} instrumental track`);
-    if (config.energy >= 7) parts.push('high energy, driving rhythm');
-    else if (config.energy >= 4) parts.push('moderate energy, steady groove');
-    else parts.push('low energy, ambient, atmospheric');
-    
-    parts.push(`${config.mood} mood`);
-    parts.push(`strict tempo exactly at ${Math.round(targetBPM)} BPM`);
-    
-    if (config.instruments.length > 0) {
-      parts.push(`featuring ${config.instruments.join(', ')}`);
-    }
-    
-    parts.push('suitable for rhythmic physical activity');
-    parts.push('strong clear loopable beat');
-    parts.push('highly melodic with complex instrumental layers, distinct piano and synth leads');
+    parts.push('Generate original ambient audio');
+    parts.push('soft warm pad textures and gentle environmental sounds');
+    parts.push('no melody, no drums, no vocals, no rhythm');
+    parts.push('smooth background atmosphere');
+    parts.push(`${config.mood} feeling`);
+    parts.push(`slow evolving texture around ${Math.round(targetBPM)} BPM`);
+    parts.push('original composition, unique sound design');
     return parts.join(', ');
   }
 

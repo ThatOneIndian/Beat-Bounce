@@ -56,6 +56,10 @@ export class BeatScorer {
     };
   }
 
+  getPerformanceLevel() {
+    return this.combo;  // LayeredMusicEngine handles thresholds + hysteresis
+  }
+
   getStats() {
     return {
       totalScore: this.totalScore,

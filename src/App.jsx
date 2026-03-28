@@ -5,7 +5,7 @@ import { PoseTracker } from './tracking/PoseTracker';
 import { DribbleDetector } from './tracking/DribbleDetector';
 import { RhythmEngine } from './tracking/RhythmEngine';
 import { BeatGrid } from './music/BeatGrid';
-import { AdaptiveMusicEngine } from './music/AdaptiveMusicEngine';
+import { LayeredMusicEngine } from './music/LayeredMusicEngine';
 import { BeatScorer } from './scoring/BeatScorer';
 import { SkeletonRenderer } from './visuals/SkeletonRenderer';
 import { BeatIndicator } from './visuals/BeatIndicator';
@@ -22,10 +22,10 @@ let staticEngines = {
   audioDetector: new AudioDribbleDetector(),
   rhythmEngine: new RhythmEngine(),
   beatGrid: new BeatGrid(),
-  musicEngine: new AdaptiveMusicEngine()
+  musicEngine: new LayeredMusicEngine()
 };
 staticEngines.beatScorer = new BeatScorer(staticEngines.beatGrid);
-staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.LYRIA_API_KEY || import.meta.env.GEMINI_API_KEY);
+staticEngines.trackGen = new TrackGenerator(import.meta.env.VITE_LYRIA_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
 staticEngines.geminiLive = new GeminiLiveClassifier(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY);
 
 function App() {
@@ -39,7 +39,7 @@ function App() {
     duration_seconds: 90
   });
 
-  const [stats, setStats] = useState({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: 5 });
+  const [stats, setStats] = useState({ score: 0, bpm: 0, combo: 0, maxCombo: 0, rating: null, energy: 5, meter: 50 });
   const [errorMessage, setErrorMessage] = useState("");
   const [mediaStream, setMediaStream] = useState(null);
   
@@ -77,23 +77,20 @@ function App() {
   const handleStart = async (newConfig) => {
     setConfig(newConfig);
     setAppState('generating');
-    
-    await staticEngines.poseTracker.initialize();
-    await staticEngines.musicEngine.initialize();
-    await staticEngines.geminiLive.connect();
-    
+
     const targetBPM = Math.round((newConfig.tempo_range.min + newConfig.tempo_range.max) / 2);
-    
-    try {
-      const trackUrl = await staticEngines.trackGen.generateTrack(targetBPM, newConfig);
-      await staticEngines.musicEngine.loadTrack(targetBPM, trackUrl);
-      staticEngines.musicEngine.playTrack(targetBPM);
-      setAppState('countdown');
-    } catch (err) {
-      console.error(err);
-      setErrorMessage(err.message || "Unknown error generating Lyria track.");
-      setAppState('error');
-    }
+
+    await staticEngines.poseTracker.initialize();
+    await staticEngines.musicEngine.initialize(newConfig.genre);
+    staticEngines.musicEngine.start(targetBPM);
+    staticEngines.geminiLive.connect();
+
+    // Lyria loads in background as ambient layer — game starts immediately
+    staticEngines.trackGen.generateTrack(targetBPM, newConfig)
+      .then(trackUrl => staticEngines.musicEngine.loadAmbient(trackUrl, targetBPM))
+      .catch(err => console.warn("Lyria ambient failed (non-blocking):", err));
+
+    setAppState('countdown');
   };
 
   useEffect(() => {
@@ -118,7 +115,8 @@ function App() {
       staticEngines.beatGrid.initialize(targetBPM, performance.now());
       setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
 
-      let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy };
+      let performanceMeter = 50; // 0-100, starts at middle
+      let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy, meter: 50 };
 
       const renderLoop = (timestamp) => {
         // Only attempt to draw or parse if the video element has loaded frames
@@ -143,18 +141,32 @@ function App() {
               const rhythm = staticEngines.rhythmEngine.onDribble(fused.timestamp);
               const scoreResult = staticEngines.beatScorer.scoreDribble(fused.timestamp);
               
+              // Update performance meter
+              if (scoreResult.rating === 'perfect') performanceMeter += 8;
+              else if (scoreResult.rating === 'great') performanceMeter += 5;
+              else if (scoreResult.rating === 'good') performanceMeter += 2;
+              else performanceMeter -= 12;
+              performanceMeter = Math.max(0, Math.min(100, performanceMeter));
+
               skeletonRenderer.setScoreColor(scoreResult.rating);
               staticEngines.musicEngine.playHitSFX(scoreResult.rating);
+              // Music layers tied to meter: 0-25 kick only, 25-50 +bass, 50-75 +chords, 75+ +lead
+              const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
+              staticEngines.musicEngine.setPerformanceLevel(meterCombo);
               beatIndicator.addSplash(scoreResult.rating);
-              if (rhythm) staticEngines.musicEngine.updateTempo(Math.round(rhythm.bpm));
-              
+              if (rhythm) {
+                staticEngines.musicEngine.updateBPM(Math.round(rhythm.bpm));
+                staticEngines.musicEngine.updateAmbientTempo(Math.round(rhythm.bpm));
+              }
+
               currentStats = {
                  score: scoreResult.totalScore,
                  combo: scoreResult.combo,
                  maxCombo: scoreResult.maxCombo,
                  rating: scoreResult.rating,
                  bpm: rhythm ? Math.round(rhythm.bpm) : currentStats.bpm,
-                 energy: config.energy
+                 energy: config.energy,
+                 meter: performanceMeter
               };
               
               // Push update to React
