@@ -25,8 +25,8 @@ export const LANDMARKS = {
  * Dribble Detection Thresholds
  */
 export const DETECTION_CONFIG = {
-  // Normalized Y per millisecond
-  MIN_VELOCITY_THRESHOLD: 0.0004,
+  // Normalized Y per millisecond — must be high enough to ignore hand tremor/breathing
+  MIN_VELOCITY_THRESHOLD: 0.0015,
 
   // Cooldown between dribbles (Prevents double triggers)
   COOLDOWN_MS: 200,

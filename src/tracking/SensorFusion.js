@@ -69,29 +69,12 @@ export class SensorFusion {
       return result;
     }
 
-    // Audio-only: wait for the window, but suppress if a visual event
-    // was recently emitted (same dribble)
+    // Audio-only: discard — speakers/music cause too many false positives.
+    // Audio is only useful for confirming visual detections (fused path above).
     if (this.pendingAudio && !this.pendingVisual) {
       const age = timestamp - this.pendingAudio.arrivalTime;
       if (age > this.maxWindow) {
-        // Suppress if too close to last emit
-        if (timestamp - this.lastEmitTime < cooldown) {
-          this.pendingAudio = null;
-          return { detected: false };
-        }
-        const result = {
-          detected: true,
-          confidence: 0.35,
-          timestamp: this.pendingAudio.timestamp,
-          source: 'audio',
-          hand: null,
-          intensity: 0.5,
-          wristScreenX: 0,
-          wristScreenY: 0
-        };
         this.pendingAudio = null;
-        this.lastEmitTime = timestamp;
-        return result;
       }
     }
 

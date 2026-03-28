@@ -222,6 +222,32 @@ export class LayeredMusicEngine {
   }
 
   dispose() { this._disposeAudio(); }
+
+  // Compatibility methods for AdaptiveMusicEngine API
+  async loadTrack(bpm, trackUrl) {
+    return this.loadAmbient(trackUrl, bpm);
+  }
+
+  playTrack(bpm) {
+    if (!this.isPlaying) this.start(bpm);
+  }
+
+  stopAll() {
+    this.stop();
+  }
+
+  updateTempo(newBPM) {
+    this.updateBPM(newBPM);
+    this.updateAmbientTempo(newBPM);
+  }
+
+  getAudioTime() {
+    return Tone.now();
+  }
+
+  get gainNode() {
+    return this.masterGain;
+  }
 }
 
 

@@ -229,6 +229,7 @@ function App() {
       setStats(s => ({ ...s, bpm: targetBPM, energy: config.energy }));
 
       let performanceMeter = 50;
+      let lastCheckedBeatIndex = 0; // track which beats we've checked for misses
       let currentStats = { score: 0, bpm: targetBPM, combo: 0, maxCombo: 0, rating: null, energy: config.energy, meter: 50 };
 
       feedbackManager.startTrack(targetBPM, engines.musicEngine.gainNode);
@@ -268,6 +269,22 @@ function App() {
             let visEvent = { detected: false, timestamp };
             if (landmarks) {
               visEvent = engines.dribbleDetector.processFrame(landmarks, timestamp);
+            }
+
+            // Check for missed beats — decay meter when beats pass without a dribble
+            const beatInterval = 60000 / engines.beatGrid.bpm;
+            const missWindow = beatInterval * 0.6; // beat is "missed" after 60% of interval passes
+            const passedBeats = engines.beatGrid.beats.filter(b => b < timestamp - missWindow);
+            const newMisses = passedBeats.length - lastCheckedBeatIndex;
+            if (newMisses > 0) {
+              lastCheckedBeatIndex = passedBeats.length;
+              performanceMeter = Math.max(0, performanceMeter - (newMisses * 4));
+              if (engines.musicEngine.setPerformanceLevel) {
+                const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
+                engines.musicEngine.setPerformanceLevel(meterCombo);
+              }
+              currentStats = { ...currentStats, meter: performanceMeter };
+              setStats({ ...currentStats });
             }
 
             const audEvent = engines.audioDetector.detect(timestamp);
