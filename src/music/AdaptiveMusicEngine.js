@@ -8,39 +8,26 @@ export class AdaptiveMusicEngine {
     this.targetBPM = null;
     
     // Master volume node
-    this.gainNode = new Tone.Volume(-10).toDestination();
+    this.gainNode = new Tone.Volume(0).toDestination();
     this.isInitialized = false;
 
-    // SFX Only
-    this.sfxSynth = null;
+    // Metronome fallback synth
+    this.metronomeEffect = null;
+    this.isMetronomeActive = false;
   }
 
   async initialize() {
     if (this.isInitialized) return;
     await Tone.start();
-
-    // Hit sound effect poly synth
-    this.sfxSynth = new Tone.PolySynth(Tone.Synth).toDestination();
-    this.sfxSynth.volume.value = -5;
-
-    Tone.Transport.start();
-
     this.isInitialized = true;
-    console.log("Tone.js initialized (No fallbacks allowed)");
-  }
-
-  playHitSFX(rating) {
-    if (!this.isInitialized || rating === 'miss') return;
-    if (rating === 'perfect') this.sfxSynth.triggerAttackRelease("C5", "16n");
-    else if (rating === 'great') this.sfxSynth.triggerAttackRelease("A4", "16n");
-    else if (rating === 'good') this.sfxSynth.triggerAttackRelease("F4", "16n");
+    console.log("Tone.js initialized");
   }
 
   // Load a generated track buffer and assign it a base BPM
-  async loadTrack(bpm, urlOrBuffer) {
+  async loadTrack(bpm, arrayBuffer) {
     return new Promise((resolve) => {
       const player = new Tone.Player({
-        url: urlOrBuffer,
+        url: arrayBuffer,
         loop: true,
         autostart: false,
         onload: () => {
@@ -52,12 +39,8 @@ export class AdaptiveMusicEngine {
   }
 
   playTrack(bpm) {
-    Tone.Transport.bpm.value = bpm;
     const bufferData = this.findNearestTrack(bpm);
-    if (!bufferData) {
-      console.error("CRITICAL: No true Lyria track loaded. Refusing to play fallback.");
-      return;
-    }
+    if (!bufferData) return;
     
     const { baseBPM, player } = bufferData;
 
@@ -86,6 +69,39 @@ export class AdaptiveMusicEngine {
     this.currentBPM = bpm;
   }
 
+  // Fallback metronome if no Lyria track is present
+  startMetronome(bpm, config = {}) {
+    if (this.isMetronomeActive) return;
+    
+    // Choose synth sound based on genre
+    let synthType = "MembraneSynth";
+    let note = "C1";
+    
+    if (config.genre === 'hip-hop') {
+      note = "G1"; // Deep bass kick
+    } else if (config.genre === 'edm') {
+      note = "A2"; // Snappy snare feel
+    } else if (config.genre === 'lo-fi') {
+      note = "E1"; // Muted thump
+    }
+
+    this.metronomeEffect = new Tone.Loop(time => {
+      const synth = new Tone[synthType]().toDestination();
+      
+      // Energy modifies volume/envelope
+      const volume = -10 + (config.energy || 5);
+      synth.volume.value = volume;
+      
+      synth.triggerAttackRelease(note, "8n", time);
+    }, "4n").start(0);
+
+    Tone.getTransport().bpm.value = bpm;
+    Tone.getTransport().start();
+    this.isMetronomeActive = true;
+    this.currentBPM = bpm;
+    console.log(`Metronome started at ${bpm} BPM (Genre: ${config.genre})`);
+  }
+
   findNearestTrack(targetBPM) {
     let nearest = null;
     let nearestDiff = Infinity;
@@ -112,26 +128,22 @@ export class AdaptiveMusicEngine {
     
     if (diff < 3) return;  // close enough, don't adjust
     
-    Tone.Transport.bpm.rampTo(userBPM, 1);
-    
     // Can we handle it with playbackRate alone?
     const nearest = this.findNearestTrack(userBPM);
-    if (!nearest) {
-      this.currentBPM = userBPM;
-      return;
-    }
-
     const neededRate = userBPM / nearest.baseBPM;
     
     if (neededRate > 0.85 && neededRate < 1.15) {
       // Yes — just adjust playbackRate (smooth, no audible artifacts)
-      // Note: Tone.js doesn't natively ramp playbackRate easily on Player,
-      // but we can set it directly.
       this.currentSource.playbackRate = neededRate;
       this.currentBPM = nearest.baseBPM; // Update base reference
     } else {
       // Need to switch to a different base track
       this.playTrack(userBPM);
+    }
+    
+    // Always update Tone transport if metronome is active
+    if (this.isMetronomeActive) {
+      Tone.getTransport().bpm.rampTo(userBPM, 0.5);
     }
   }
 
@@ -141,6 +153,12 @@ export class AdaptiveMusicEngine {
       setTimeout(() => {
         this.tracks.forEach(player => player.stop());
       }, 2000);
+    }
+
+    if (this.isMetronomeActive) {
+      Tone.getTransport().stop();
+      this.metronomeEffect.stop();
+      this.isMetronomeActive = false;
     }
   }
 }
