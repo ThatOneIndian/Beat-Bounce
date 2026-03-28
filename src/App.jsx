@@ -273,13 +273,16 @@ function App() {
 
             // Check for missed beats using a time-based tracker (not beat array which gets cleaned)
             const beatInterval = 60000 / engines.beatGrid.bpm;
-            const missWindow = beatInterval * 0.7;
             if (!lastBeatCheckTime) lastBeatCheckTime = timestamp;
             const timeSinceLastCheck = timestamp - lastBeatCheckTime;
-            const missedBeatsCount = Math.floor(timeSinceLastCheck / (beatInterval + missWindow));
+            // Fire a miss for every full beat interval that passes without a dribble
+            // Grace period: wait one full beat before the first miss triggers
+            const missedBeatsCount = Math.floor(timeSinceLastCheck / beatInterval) - 1;
 
-            if (missedBeatsCount > 0 && timeSinceLastCheck > beatInterval + missWindow) {
-              lastBeatCheckTime = timestamp;
+            if (missedBeatsCount > 0) {
+              // Advance lastBeatCheckTime by the beats we've penalized, not to current time
+              // so the next miss fires exactly one beat later
+              lastBeatCheckTime += (missedBeatsCount + 1) * beatInterval;
               // Harsh meter penalty — each missed beat costs 8 points
               performanceMeter = Math.max(0, performanceMeter - (missedBeatsCount * 8));
               // Break combo on miss
@@ -288,9 +291,13 @@ function App() {
               engines.beatScorer.hitCounts.miss += missedBeatsCount;
               // Score penalty — lose 25 points per missed beat
               engines.beatScorer.totalScore = Math.max(0, engines.beatScorer.totalScore - (missedBeatsCount * 25));
+              const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
               if (engines.musicEngine.setPerformanceLevel) {
-                const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
                 engines.musicEngine.setPerformanceLevel(meterCombo);
+              }
+              // Drive master filter intensity from raw meter value
+              if (engines.musicEngine.setMeterIntensity) {
+                engines.musicEngine.setMeterIntensity(performanceMeter);
               }
               // Play miss SFX
               engines.musicEngine.playMissSFX();
@@ -342,6 +349,10 @@ function App() {
               const meterCombo = performanceMeter >= 75 ? 15 : performanceMeter >= 50 ? 8 : performanceMeter >= 25 ? 3 : 0;
               if (engines.musicEngine.setPerformanceLevel) {
                 engines.musicEngine.setPerformanceLevel(meterCombo);
+              }
+              // Drive master filter intensity from raw meter value
+              if (engines.musicEngine.setMeterIntensity) {
+                engines.musicEngine.setMeterIntensity(performanceMeter);
               }
 
               if (rhythm) {

@@ -60,14 +60,18 @@ export class HUD {
         perfect: `rgba(255, 215, 0, ${opacity})`, // Gold
         great:   `rgba(74, 144, 217, ${opacity})`, // Blue
         good:    `rgba(39, 174, 96, ${opacity})`,  // Green
-        miss:    `rgba(220, 60, 60, ${opacity})`   // Red
+        miss:    `rgba(220, 60, 60, ${opacity})`,  // Red
+        'too late': `rgba(220, 60, 60, ${opacity})`,
+        'too early': `rgba(220, 60, 60, ${opacity})`
       };
       
       const ratingLabels = {
         perfect: 'PERFECT',
         great: 'GREAT',
         good: 'GOOD',
-        miss: 'MISS'
+        miss: 'MISS',
+        'too late': 'TOO LATE',
+        'too early': 'TOO EARLY'
       };
       
       ctx.save();
