@@ -1,0 +1,71 @@
+.tile {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  min-height: 120px;
+}
+
+.tile.filled {
+  background: var(--surface-hover);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: inset 0 0 20px rgba(0, 229, 255, 0.05);
+}
+
+.tile.active {
+  border-color: var(--neon-blue);
+  box-shadow: 0 0 15px rgba(0, 229, 255, 0.2);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.icon {
+  color: var(--neon-pink);
+}
+
+.title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.content {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+}
+
+.content p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.empty {
+  color: var(--text-secondary);
+  font-style: italic;
+  font-size: 0.875rem !important;
+}
+
+.pulseRing {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 2px solid var(--neon-blue);
+  border-radius: 12px;
+  pointer-events: none;
+}
