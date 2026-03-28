@@ -23,7 +23,7 @@ function meterToAngle(meter) {
 
 const LAYER_LABELS = ['DRUMS', 'BASS', 'SYNTH', 'LEAD'];
 
-export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter = 50 }) {
+export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter = 50, onQuit }) {
   const zone = getZone(meter);
   const needleAngle = meterToAngle(meter);
   const isOnFire = meter >= 80;
@@ -56,41 +56,56 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
         }
       `}</style>
 
-      <div className="active-session" style={{ display: 'flex', flexDirection: 'column', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, padding: '2rem', zIndex: 10, pointerEvents: 'none' }}>
-        {/* Top stats */}
-        <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-          <div className="glass-panel" style={{ padding: '1rem 2rem' }}>
-            <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Score</h3>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800 }}>{score.toLocaleString()}</div>
+      <div className="active-session" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, pointerEvents: 'none' }}>
+        {/* Top stats — individual floating pills */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '0.75rem 0.75rem 0' }}>
+          <button onClick={onQuit} style={{
+            pointerEvents: 'auto', cursor: 'pointer',
+            padding: '0.4rem 0.8rem', fontSize: '0.6rem', fontWeight: 700,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            color: '#ff4444', background: 'rgba(10, 10, 30, 0.75)',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(255, 68, 68, 0.25)', borderRadius: '10px',
+            boxShadow: '0 2px 12px rgba(0, 0, 0, 0.4)',
+          }}>Quit</button>
+
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {[
+              { label: 'Score', value: score.toLocaleString(), color: '#fff' },
+              { label: 'BPM', value: bpm > 0 ? Math.round(bpm) : '--', color: 'var(--accent-color)' },
+              { label: 'Combo', value: combo > 0 ? `${combo}x` : '--', color: combo > 10 ? '#FFD700' : '#fff' },
+            ].map(item => (
+              <div key={item.label} style={{
+                padding: '0.35rem 0.75rem', textAlign: 'center',
+                background: 'rgba(10, 10, 30, 0.75)', backdropFilter: 'blur(10px)',
+                borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: '0 2px 12px rgba(0, 0, 0, 0.4)',
+              }}>
+                <div style={{ fontSize: '0.45rem', fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{item.label}</div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: item.color, lineHeight: 1.2 }}>{item.value}</div>
+              </div>
+            ))}
           </div>
-          <div className="glass-panel" style={{ padding: '1rem 2rem', textAlign: 'center' }}>
-            <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Current BPM</h3>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--accent-color)' }}>
-              {bpm > 0 ? Math.round(bpm) : '--'}
-            </div>
-          </div>
-          <div className="glass-panel" style={{ padding: '1rem 2rem', textAlign: 'right' }}>
-            <h3 style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Combo</h3>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: combo > 10 ? '#FFD700' : '#fff' }}>
-              {combo > 0 ? `${combo}x` : '--'}
-            </div>
-          </div>
-        </header>
+        </div>
 
         {/* ── DIAMOND NEEDLE METER ── */}
         <div style={{
           position: 'absolute',
-          right: '1.5rem',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          width: '200px',
-          height: '260px',
+          right: '1.25rem',
+          bottom: '1.25rem',
+          width: '170px',
+          padding: '12px 8px 10px',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
+          background: 'rgba(10, 10, 30, 0.75)',
+          backdropFilter: 'blur(10px)',
+          borderRadius: '12px',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
         }}>
           {/* Gauge */}
-          <div style={{ position: 'relative', width: '200px', height: '120px', overflow: 'hidden' }}>
+          <div style={{ position: 'relative', width: '150px', height: '90px', overflow: 'hidden' }}>
             {/* SVG Arc Gauge */}
             <svg viewBox="0 0 200 120" style={{ width: '100%', height: '100%' }}>
               {/* Background arc segments */}
@@ -192,35 +207,35 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
           </div>
 
           {/* Diamond with number */}
-          <div style={{ position: 'relative', marginTop: '-10px' }}>
+          <div style={{ position: 'relative', marginTop: '-8px' }}>
             <div style={{
-              width: '52px',
-              height: '52px',
+              width: '38px',
+              height: '38px',
               background: `linear-gradient(135deg, ${zone.color}30, ${zone.color}10)`,
               border: `2px solid ${zone.color}`,
-              borderRadius: '4px',
+              borderRadius: '3px',
               transform: 'translate(-50%, -50%) rotate(45deg)',
               position: 'absolute',
               left: '50%',
               top: '50%',
-              boxShadow: `0 0 15px ${zone.color}40, inset 0 0 15px ${zone.color}15`,
+              boxShadow: `0 0 12px ${zone.color}40, inset 0 0 10px ${zone.color}15`,
               animation: isOnFire ? 'diamond-pulse 1s ease infinite' : 'none',
               transition: 'border-color 0.5s ease, box-shadow 0.5s ease',
             }} />
             <div style={{
               position: 'relative',
-              width: '52px',
-              height: '52px',
+              width: '38px',
+              height: '38px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               zIndex: 2,
             }}>
               <span style={{
-                fontSize: '1.5rem',
+                fontSize: '1.1rem',
                 fontWeight: 900,
                 color: '#fff',
-                textShadow: `0 0 10px ${zone.color}, 0 2px 6px rgba(0,0,0,0.8)`,
+                textShadow: `0 0 8px ${zone.color}, 0 2px 4px rgba(0,0,0,0.8)`,
               }}>
                 {Math.round(meter)}
               </span>
@@ -229,10 +244,10 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
 
           {/* Status label */}
           <div style={{
-            marginTop: '22px',
-            fontSize: '0.85rem',
+            marginTop: '16px',
+            fontSize: '0.65rem',
             fontWeight: 900,
-            letterSpacing: '0.2em',
+            letterSpacing: '0.18em',
             color: zone.color,
             textTransform: 'uppercase',
             animation: isOnFire ? 'label-glow 0.6s ease infinite' : 'none',
@@ -244,18 +259,18 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
           {/* Layer indicators */}
           <div style={{
             display: 'flex',
-            gap: '6px',
-            marginTop: '10px',
+            gap: '4px',
+            marginTop: '6px',
           }}>
             {LAYER_LABELS.map((label, i) => {
               const active = activeLayers[i];
               return (
                 <div key={label} style={{
-                  padding: '3px 8px',
-                  borderRadius: '4px',
-                  fontSize: '0.55rem',
+                  padding: '2px 5px',
+                  borderRadius: '3px',
+                  fontSize: '0.45rem',
                   fontWeight: 700,
-                  letterSpacing: '0.08em',
+                  letterSpacing: '0.06em',
                   color: active ? zone.color : 'rgba(255,255,255,0.25)',
                   background: active ? `${zone.color}15` : 'rgba(255,255,255,0.03)',
                   border: `1px solid ${active ? zone.color + '40' : 'rgba(255,255,255,0.06)'}`,
@@ -273,7 +288,7 @@ export default function HUD({ score, bpm, combo, maxCombo, rating, energy, meter
         {rating && (
           <div style={{
             position: 'absolute', top: '50%', left: '50%',
-            fontSize: '4.5rem', fontWeight: 900, textTransform: 'uppercase',
+            fontSize: '3.5rem', fontWeight: 900, textTransform: 'uppercase',
             color: rating === 'perfect' ? '#FFD700' : rating === 'great' ? '#00BFFF' : rating === 'good' ? '#00FF88' : '#FF2222',
             textShadow: `0 0 30px ${rating === 'perfect' ? '#FFD700' : rating === 'great' ? '#00BFFF' : rating === 'good' ? '#00FF88' : '#FF2222'}80`,
             pointerEvents: 'none', zIndex: 20,
